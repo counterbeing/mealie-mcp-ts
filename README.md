@@ -5,9 +5,12 @@ An MCP (Model Context Protocol) server that enables LLMs to interact with [Meali
 ## Features
 
 - **Recipe Management**: List, view, create, update, and delete recipes
-- **Ingredient Parsing**: Support for quantity, unit, food, and notes in ingredients
+- **Recipe Import**: Import recipes from URLs (supports most recipe websites)
+- **Ingredient Parsing**: Automatic parsing of natural language ingredients (e.g., "2 cups flour")
 - **Image Uploads**: Upload images to recipes via base64 encoding
-- **Shopping Lists**: View shopping lists and add items
+- **Meal Planning**: Create and manage meal plans with date scheduling
+- **Shopping Lists**: Full CRUD for shopping list items, plus add recipe ingredients to lists
+- **Organization**: Manage categories and tags for recipe organization
 - **Food Management**: List and create food items
 
 ## Installation
@@ -75,6 +78,8 @@ docker run -e MEALIE_URL=http://host.docker.internal:9925 \
 
 ## Available Tools
 
+### Recipes (6 tools)
+
 | Tool | Description |
 |------|-------------|
 | `list_recipes` | List all recipes with pagination |
@@ -83,11 +88,49 @@ docker run -e MEALIE_URL=http://host.docker.internal:9925 \
 | `update_recipe` | Update an existing recipe |
 | `delete_recipe` | Delete a recipe |
 | `upload_recipe_image` | Upload an image to a recipe (base64) |
-| `list_foods` | List all foods/ingredients |
-| `create_food` | Create a new food item |
+
+### Recipe Import (2 tools)
+
+| Tool | Description |
+|------|-------------|
+| `test_scrape_url` | Test if a URL can be scraped for recipe data |
+| `create_recipe_from_url` | Import a recipe by scraping a URL |
+
+### Meal Planning (4 tools)
+
+| Tool | Description |
+|------|-------------|
+| `list_meal_plans` | List meal plans with optional date range filter |
+| `get_todays_meal_plan` | Get today's planned meals |
+| `create_meal_plan` | Create a meal plan entry for a specific date |
+| `delete_meal_plan` | Delete a meal plan entry |
+
+### Shopping Lists (6 tools)
+
+| Tool | Description |
+|------|-------------|
 | `list_shopping_lists` | List all shopping lists |
 | `get_shopping_list` | Get shopping list with items |
 | `add_shopping_list_item` | Add an item to a shopping list |
+| `update_shopping_list_item` | Update an item (quantity, note, or check/uncheck) |
+| `delete_shopping_list_item` | Remove an item from a shopping list |
+| `add_recipe_to_shopping_list` | Add all ingredients from a recipe to a list |
+
+### Organization (4 tools)
+
+| Tool | Description |
+|------|-------------|
+| `list_categories` | List all recipe categories |
+| `create_category` | Create a new category |
+| `list_tags` | List all recipe tags |
+| `create_tag` | Create a new tag |
+
+### Foods (2 tools)
+
+| Tool | Description |
+|------|-------------|
+| `list_foods` | List all foods/ingredients |
+| `create_food` | Create a new food item |
 
 ## Development
 
