@@ -1,17 +1,37 @@
 import { z } from 'zod';
 
 const ALL_TOOLS = [
+  // Recipe tools
   'list_recipes',
   'get_recipe',
   'create_recipe',
   'update_recipe',
   'delete_recipe',
   'upload_recipe_image',
+  // Food tools
   'list_foods',
   'create_food',
+  // Shopping list tools
   'list_shopping_lists',
   'get_shopping_list',
   'add_shopping_list_item',
+  'update_shopping_list_item',
+  'delete_shopping_list_item',
+  'add_recipe_to_shopping_list',
+  // Category tools
+  'list_categories',
+  'create_category',
+  // Tag tools
+  'list_tags',
+  'create_tag',
+  // Recipe URL scraping tools
+  'test_scrape_url',
+  'create_recipe_from_url',
+  // Meal planning tools
+  'list_meal_plans',
+  'get_todays_meal_plan',
+  'create_meal_plan',
+  'delete_meal_plan',
 ] as const;
 
 export type ToolName = (typeof ALL_TOOLS)[number];

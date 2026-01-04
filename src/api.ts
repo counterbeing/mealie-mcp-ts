@@ -1,10 +1,21 @@
+import { z } from 'zod';
 import type { Config } from './config.js';
 import {
+  type AddRecipeToListInput,
+  type CategoryOut,
+  type CategoryPagination,
+  type CreateMealPlanInput,
   type CreateRecipeInput,
+  categoryOutSchema,
+  categoryPaginationSchema,
   type FoodPagination,
   foodPaginationSchema,
   type IngredientFood,
   ingredientFoodSchema,
+  type MealPlanEntry,
+  type MealPlanPagination,
+  mealPlanEntrySchema,
+  mealPlanPaginationSchema,
   type Recipe,
   type RecipePagination,
   recipePaginationSchema,
@@ -16,6 +27,10 @@ import {
   shoppingListItemSchema,
   shoppingListPaginationSchema,
   shoppingListSchema,
+  type TagOut,
+  type TagPagination,
+  tagOutSchema,
+  tagPaginationSchema,
   type UpdateRecipeInput,
 } from './types.js';
 
@@ -397,5 +412,163 @@ export class MealieApi {
       }),
     });
     return shoppingListItemSchema.parse(data);
+  }
+
+  // ============ Categories ============
+
+  async listCategories(
+    page = 1,
+    perPage = 50,
+    search?: string,
+  ): Promise<CategoryPagination> {
+    const searchParam = search ? `&search=${encodeURIComponent(search)}` : '';
+    const data = await this.request<unknown>(
+      `/api/organizers/categories?page=${page}&perPage=${perPage}${searchParam}`,
+    );
+    return categoryPaginationSchema.parse(data);
+  }
+
+  async createCategory(name: string): Promise<CategoryOut> {
+    const data = await this.request<unknown>('/api/organizers/categories', {
+      method: 'POST',
+      body: JSON.stringify({ name }),
+    });
+    return categoryOutSchema.parse(data);
+  }
+
+  // ============ Tags ============
+
+  async listTags(
+    page = 1,
+    perPage = 50,
+    search?: string,
+  ): Promise<TagPagination> {
+    const searchParam = search ? `&search=${encodeURIComponent(search)}` : '';
+    const data = await this.request<unknown>(
+      `/api/organizers/tags?page=${page}&perPage=${perPage}${searchParam}`,
+    );
+    return tagPaginationSchema.parse(data);
+  }
+
+  async createTag(name: string): Promise<TagOut> {
+    const data = await this.request<unknown>('/api/organizers/tags', {
+      method: 'POST',
+      body: JSON.stringify({ name }),
+    });
+    return tagOutSchema.parse(data);
+  }
+
+  // ============ Recipe URL Scraping ============
+
+  async testScrapeUrl(url: string): Promise<unknown> {
+    const data = await this.request<unknown>('/api/recipes/test-scrape-url', {
+      method: 'POST',
+      body: JSON.stringify({ url, useOpenAI: false }),
+    });
+    return data;
+  }
+
+  async createRecipeFromUrl(url: string, includeTags = false): Promise<string> {
+    const data = await this.request<string>('/api/recipes/create/url', {
+      method: 'POST',
+      body: JSON.stringify({ url, includeTags }),
+    });
+    return data; // Returns the slug of the created recipe
+  }
+
+  // ============ Meal Plans ============
+
+  async listMealPlans(
+    startDate?: string,
+    endDate?: string,
+  ): Promise<MealPlanPagination> {
+    const params = new URLSearchParams();
+    if (startDate) params.append('start_date', startDate);
+    if (endDate) params.append('end_date', endDate);
+    const queryString = params.toString();
+    const data = await this.request<unknown>(
+      `/api/households/mealplans${queryString ? `?${queryString}` : ''}`,
+    );
+    return mealPlanPaginationSchema.parse(data);
+  }
+
+  async getTodaysMealPlan(): Promise<MealPlanEntry[]> {
+    const data = await this.request<unknown[]>(
+      '/api/households/mealplans/today',
+    );
+    return z.array(mealPlanEntrySchema).parse(data);
+  }
+
+  async createMealPlan(input: CreateMealPlanInput): Promise<MealPlanEntry> {
+    const data = await this.request<unknown>('/api/households/mealplans', {
+      method: 'POST',
+      body: JSON.stringify({
+        date: input.date,
+        entryType: input.entryType,
+        title: input.title,
+        text: input.text,
+        recipeId: input.recipeId ?? null,
+      }),
+    });
+    return mealPlanEntrySchema.parse(data);
+  }
+
+  async deleteMealPlan(itemId: number): Promise<void> {
+    await this.request<void>(`/api/households/mealplans/${itemId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  // ============ Shopping List Items (Extended) ============
+
+  async updateShoppingListItem(
+    itemId: string,
+    updates: Partial<{ quantity: number; note: string; checked: boolean }>,
+  ): Promise<ShoppingListItem> {
+    // First get the current item to merge with updates
+    const currentItem = await this.request<ShoppingListItem>(
+      `/api/households/shopping/items/${itemId}`,
+    );
+
+    const updateData = {
+      ...currentItem,
+      quantity: updates.quantity ?? currentItem.quantity,
+      note: updates.note ?? currentItem.note,
+      display: updates.note ?? currentItem.display,
+      checked: updates.checked ?? currentItem.checked,
+    };
+
+    const data = await this.request<unknown>(
+      `/api/households/shopping/items/${itemId}`,
+      {
+        method: 'PUT',
+        body: JSON.stringify(updateData),
+      },
+    );
+    // Response is ShoppingListItemsCollectionOut with updatedItems array
+    const collection = data as { updatedItems: unknown[] };
+    return shoppingListItemSchema.parse(collection.updatedItems[0]);
+  }
+
+  async deleteShoppingListItem(itemId: string): Promise<void> {
+    await this.request<void>(`/api/households/shopping/items/${itemId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async addRecipeToShoppingList(
+    input: AddRecipeToListInput,
+  ): Promise<ShoppingList> {
+    const data = await this.request<unknown>(
+      `/api/households/shopping/lists/${input.shoppingListId}/recipe/${input.recipeId}`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          recipeIncrementQuantity: input.recipeQuantity,
+          recipeIngredients: null,
+        }),
+      },
+    );
+    return shoppingListSchema.parse(data);
   }
 }

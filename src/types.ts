@@ -223,6 +223,101 @@ export const shoppingListPaginationSchema = paginationSchema(
   shoppingListSummarySchema,
 );
 
+// ============ Categories & Tags (for organizers) ============
+
+// Category output schema (uses existing recipeCategorySchema structure)
+export const categoryOutSchema = z.object({
+  id: z.string().uuid(),
+  groupId: z.string().uuid(),
+  name: z.string(),
+  slug: z.string(),
+});
+
+export const categoryPaginationSchema = paginationSchema(categoryOutSchema);
+
+// Tag output schema (uses existing recipeTagSchema structure)
+export const tagOutSchema = z.object({
+  id: z.string().uuid(),
+  groupId: z.string().uuid(),
+  name: z.string(),
+  slug: z.string(),
+});
+
+export const tagPaginationSchema = paginationSchema(tagOutSchema);
+
+// ============ Meal Planning ============
+
+export const planEntryTypeSchema = z.enum([
+  'breakfast',
+  'lunch',
+  'dinner',
+  'side',
+  'snack',
+  'drink',
+  'dessert',
+]);
+
+export const mealPlanEntrySchema = z.object({
+  id: z.number().optional(),
+  date: z.string(), // YYYY-MM-DD format
+  entryType: planEntryTypeSchema.default('dinner'),
+  title: z.string().default(''),
+  text: z.string().default(''),
+  recipeId: z.string().uuid().nullish(),
+  groupId: z.string().uuid().optional(),
+  householdId: z.string().uuid().optional(),
+  recipe: recipeSummarySchema.nullish(),
+});
+
+export const mealPlanPaginationSchema = paginationSchema(mealPlanEntrySchema);
+
+export const createMealPlanInputSchema = z.object({
+  date: z.string().describe('Date for the meal plan entry (YYYY-MM-DD format)'),
+  entryType: planEntryTypeSchema
+    .optional()
+    .default('dinner')
+    .describe(
+      'Type of meal: breakfast, lunch, dinner, side, snack, drink, or dessert',
+    ),
+  title: z
+    .string()
+    .optional()
+    .default('')
+    .describe('Optional title for the meal plan entry'),
+  text: z
+    .string()
+    .optional()
+    .default('')
+    .describe('Optional notes or description'),
+  recipeId: z
+    .string()
+    .uuid()
+    .optional()
+    .describe('Optional recipe ID to link to this meal plan entry'),
+});
+
+// ============ Shopping List Improvements ============
+
+export const updateShoppingListItemInputSchema = z.object({
+  itemId: z.string().uuid().describe('ID of the shopping list item to update'),
+  quantity: z.number().optional().describe('New quantity'),
+  note: z.string().optional().describe('New note/display text'),
+  checked: z.boolean().optional().describe('Whether the item is checked off'),
+});
+
+export const addRecipeToListInputSchema = z.object({
+  shoppingListId: z.string().uuid().describe('ID of the shopping list'),
+  recipeId: z
+    .string()
+    .uuid()
+    .describe('ID of the recipe to add ingredients from'),
+  recipeQuantity: z
+    .number()
+    .optional()
+    .default(1)
+    .describe('Number of servings/portions to add (default: 1)'),
+});
+
 // Type exports
 export type IngredientUnit = z.infer<typeof ingredientUnitSchema>;
 export type IngredientFood = z.infer<typeof ingredientFoodSchema>;
@@ -336,3 +431,17 @@ export const shoppingListItemInputSchema = z.object({
 export type CreateRecipeInput = z.infer<typeof createRecipeInputSchema>;
 export type UpdateRecipeInput = z.infer<typeof updateRecipeInputSchema>;
 export type ShoppingListItemInput = z.infer<typeof shoppingListItemInputSchema>;
+
+// New type exports for Categories, Tags, Meal Plans, Shopping List improvements
+export type CategoryOut = z.infer<typeof categoryOutSchema>;
+export type CategoryPagination = z.infer<typeof categoryPaginationSchema>;
+export type TagOut = z.infer<typeof tagOutSchema>;
+export type TagPagination = z.infer<typeof tagPaginationSchema>;
+export type PlanEntryType = z.infer<typeof planEntryTypeSchema>;
+export type MealPlanEntry = z.infer<typeof mealPlanEntrySchema>;
+export type MealPlanPagination = z.infer<typeof mealPlanPaginationSchema>;
+export type CreateMealPlanInput = z.infer<typeof createMealPlanInputSchema>;
+export type UpdateShoppingListItemInput = z.infer<
+  typeof updateShoppingListItemInputSchema
+>;
+export type AddRecipeToListInput = z.infer<typeof addRecipeToListInputSchema>;

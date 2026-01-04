@@ -2,9 +2,12 @@ import { z } from 'zod';
 import type { MealieApi } from './api.js';
 import type { ToolName } from './config.js';
 import {
+  addRecipeToListInputSchema,
+  createMealPlanInputSchema,
   createRecipeInputSchema,
   shoppingListItemInputSchema,
   updateRecipeInputSchema,
+  updateShoppingListItemInputSchema,
 } from './types.js';
 
 export interface ToolDefinition {
@@ -333,19 +336,387 @@ export const addShoppingListItemTool: ToolDefinition = {
   },
 };
 
+// ============ Categories ============
+
+const listCategoriesSchema = z.object({
+  page: z.number().optional().default(1).describe('Page number (default: 1)'),
+  perPage: z
+    .number()
+    .optional()
+    .default(50)
+    .describe('Items per page (default: 50)'),
+  search: z.string().optional().describe('Search term to filter categories'),
+});
+
+export const listCategoriesTool: ToolDefinition = {
+  name: 'list_categories',
+  description:
+    'List all recipe categories in Mealie. Categories help organize recipes into groups like "Dinner", "Breakfast", "Italian", etc.',
+  inputSchema: listCategoriesSchema,
+  handler: async (api, input) => {
+    const params = listCategoriesSchema.parse(input);
+    const result = await api.listCategories(
+      params.page,
+      params.perPage,
+      params.search,
+    );
+    return {
+      page: result.page,
+      perPage: result.per_page,
+      total: result.total,
+      totalPages: result.total_pages,
+      categories: result.items.map((c) => ({
+        id: c.id,
+        name: c.name,
+        slug: c.slug,
+      })),
+    };
+  },
+};
+
+const createCategorySchema = z.object({
+  name: z
+    .string()
+    .describe(
+      'Name of the category (e.g., "Dinner", "Italian", "Quick Meals")',
+    ),
+});
+
+export const createCategoryTool: ToolDefinition = {
+  name: 'create_category',
+  description:
+    'Create a new recipe category in Mealie. Categories help organize recipes into logical groups.',
+  inputSchema: createCategorySchema,
+  handler: async (api, input) => {
+    const params = createCategorySchema.parse(input);
+    const category = await api.createCategory(params.name);
+    return {
+      success: true,
+      category: {
+        id: category.id,
+        name: category.name,
+        slug: category.slug,
+      },
+      message: `Category "${params.name}" created successfully`,
+    };
+  },
+};
+
+// ============ Tags ============
+
+const listTagsSchema = z.object({
+  page: z.number().optional().default(1).describe('Page number (default: 1)'),
+  perPage: z
+    .number()
+    .optional()
+    .default(50)
+    .describe('Items per page (default: 50)'),
+  search: z.string().optional().describe('Search term to filter tags'),
+});
+
+export const listTagsTool: ToolDefinition = {
+  name: 'list_tags',
+  description:
+    'List all recipe tags in Mealie. Tags provide flexible labeling for recipes like "vegetarian", "gluten-free", "kid-friendly", etc.',
+  inputSchema: listTagsSchema,
+  handler: async (api, input) => {
+    const params = listTagsSchema.parse(input);
+    const result = await api.listTags(
+      params.page,
+      params.perPage,
+      params.search,
+    );
+    return {
+      page: result.page,
+      perPage: result.per_page,
+      total: result.total,
+      totalPages: result.total_pages,
+      tags: result.items.map((t) => ({
+        id: t.id,
+        name: t.name,
+        slug: t.slug,
+      })),
+    };
+  },
+};
+
+const createTagSchema = z.object({
+  name: z
+    .string()
+    .describe('Name of the tag (e.g., "vegetarian", "gluten-free", "quick")'),
+});
+
+export const createTagTool: ToolDefinition = {
+  name: 'create_tag',
+  description:
+    'Create a new recipe tag in Mealie. Tags provide flexible labeling for recipes.',
+  inputSchema: createTagSchema,
+  handler: async (api, input) => {
+    const params = createTagSchema.parse(input);
+    const tag = await api.createTag(params.name);
+    return {
+      success: true,
+      tag: {
+        id: tag.id,
+        name: tag.name,
+        slug: tag.slug,
+      },
+      message: `Tag "${params.name}" created successfully`,
+    };
+  },
+};
+
+// ============ Recipe URL Scraping ============
+
+const testScrapeUrlSchema = z.object({
+  url: z.string().url().describe('URL of the recipe page to test scraping'),
+});
+
+export const testScrapeUrlTool: ToolDefinition = {
+  name: 'test_scrape_url',
+  description:
+    'Test if a URL can be scraped for recipe data without actually creating a recipe. Useful for validating URLs before importing.',
+  inputSchema: testScrapeUrlSchema,
+  handler: async (api, input) => {
+    const params = testScrapeUrlSchema.parse(input);
+    const result = await api.testScrapeUrl(params.url);
+    return {
+      success: true,
+      url: params.url,
+      scrapedData: result,
+      message: 'URL scrape test completed successfully',
+    };
+  },
+};
+
+const createRecipeFromUrlSchema = z.object({
+  url: z.string().url().describe('URL of the recipe page to import'),
+  includeTags: z
+    .boolean()
+    .optional()
+    .default(false)
+    .describe('Whether to import tags from the recipe page'),
+});
+
+export const createRecipeFromUrlTool: ToolDefinition = {
+  name: 'create_recipe_from_url',
+  description:
+    'Create a new recipe by scraping data from a URL. Supports most recipe websites that use structured data (schema.org Recipe format).',
+  inputSchema: createRecipeFromUrlSchema,
+  handler: async (api, input) => {
+    const params = createRecipeFromUrlSchema.parse(input);
+    const slug = await api.createRecipeFromUrl(params.url, params.includeTags);
+    return {
+      success: true,
+      slug,
+      message: `Recipe imported successfully from ${params.url}`,
+    };
+  },
+};
+
+// ============ Meal Planning ============
+
+const listMealPlansSchema = z.object({
+  startDate: z
+    .string()
+    .optional()
+    .describe('Start date for filtering (YYYY-MM-DD format)'),
+  endDate: z
+    .string()
+    .optional()
+    .describe('End date for filtering (YYYY-MM-DD format)'),
+});
+
+export const listMealPlansTool: ToolDefinition = {
+  name: 'list_meal_plans',
+  description:
+    'List meal plan entries within a date range. If no dates provided, returns all meal plans.',
+  inputSchema: listMealPlansSchema,
+  handler: async (api, input) => {
+    const params = listMealPlansSchema.parse(input);
+    const result = await api.listMealPlans(params.startDate, params.endDate);
+    return {
+      page: result.page,
+      perPage: result.per_page,
+      total: result.total,
+      totalPages: result.total_pages,
+      mealPlans: result.items.map((mp) => ({
+        id: mp.id,
+        date: mp.date,
+        entryType: mp.entryType,
+        title: mp.title,
+        text: mp.text,
+        recipeId: mp.recipeId,
+        recipeName: mp.recipe?.name,
+        recipeSlug: mp.recipe?.slug,
+      })),
+    };
+  },
+};
+
+const getTodaysMealPlanSchema = z.object({});
+
+export const getTodaysMealPlanTool: ToolDefinition = {
+  name: 'get_todays_meal_plan',
+  description:
+    "Get today's meal plan entries. Returns all meals planned for the current day.",
+  inputSchema: getTodaysMealPlanSchema,
+  handler: async (api, _input) => {
+    const entries = await api.getTodaysMealPlan();
+    return {
+      date: new Date().toISOString().split('T')[0],
+      meals: entries.map((mp) => ({
+        id: mp.id,
+        entryType: mp.entryType,
+        title: mp.title,
+        text: mp.text,
+        recipeId: mp.recipeId,
+        recipeName: mp.recipe?.name,
+        recipeSlug: mp.recipe?.slug,
+      })),
+    };
+  },
+};
+
+export const createMealPlanTool: ToolDefinition = {
+  name: 'create_meal_plan',
+  description:
+    'Create a new meal plan entry for a specific date. Can optionally link to an existing recipe.',
+  inputSchema: createMealPlanInputSchema,
+  handler: async (api, input) => {
+    const params = createMealPlanInputSchema.parse(input);
+    const entry = await api.createMealPlan(params);
+    return {
+      success: true,
+      mealPlan: {
+        id: entry.id,
+        date: entry.date,
+        entryType: entry.entryType,
+        title: entry.title,
+        text: entry.text,
+        recipeId: entry.recipeId,
+      },
+      message: `Meal plan entry created for ${params.date}`,
+    };
+  },
+};
+
+const deleteMealPlanSchema = z.object({
+  itemId: z.number().describe('ID of the meal plan entry to delete'),
+});
+
+export const deleteMealPlanTool: ToolDefinition = {
+  name: 'delete_meal_plan',
+  description: 'Delete a meal plan entry by its ID.',
+  inputSchema: deleteMealPlanSchema,
+  handler: async (api, input) => {
+    const params = deleteMealPlanSchema.parse(input);
+    await api.deleteMealPlan(params.itemId);
+    return {
+      success: true,
+      message: `Meal plan entry ${params.itemId} deleted successfully`,
+    };
+  },
+};
+
+// ============ Shopping List Improvements ============
+
+export const updateShoppingListItemTool: ToolDefinition = {
+  name: 'update_shopping_list_item',
+  description:
+    'Update a shopping list item. Can modify quantity, note, or checked status (to mark items as purchased).',
+  inputSchema: updateShoppingListItemInputSchema,
+  handler: async (api, input) => {
+    const params = updateShoppingListItemInputSchema.parse(input);
+    const item = await api.updateShoppingListItem(params.itemId, {
+      quantity: params.quantity,
+      note: params.note,
+      checked: params.checked,
+    });
+    return {
+      success: true,
+      item: {
+        id: item.id,
+        quantity: item.quantity,
+        note: item.note,
+        checked: item.checked,
+      },
+      message: 'Shopping list item updated successfully',
+    };
+  },
+};
+
+const deleteShoppingListItemSchema = z.object({
+  itemId: z.string().uuid().describe('ID of the shopping list item to delete'),
+});
+
+export const deleteShoppingListItemTool: ToolDefinition = {
+  name: 'delete_shopping_list_item',
+  description: 'Remove an item from a shopping list.',
+  inputSchema: deleteShoppingListItemSchema,
+  handler: async (api, input) => {
+    const params = deleteShoppingListItemSchema.parse(input);
+    await api.deleteShoppingListItem(params.itemId);
+    return {
+      success: true,
+      message: `Shopping list item deleted successfully`,
+    };
+  },
+};
+
+export const addRecipeToShoppingListTool: ToolDefinition = {
+  name: 'add_recipe_to_shopping_list',
+  description:
+    'Add all ingredients from a recipe to a shopping list. Optionally specify quantity for multiple servings.',
+  inputSchema: addRecipeToListInputSchema,
+  handler: async (api, input) => {
+    const params = addRecipeToListInputSchema.parse(input);
+    const list = await api.addRecipeToShoppingList(params);
+    return {
+      success: true,
+      shoppingList: {
+        id: list.id,
+        name: list.name,
+        itemCount: list.listItems.length,
+      },
+      message: 'Recipe ingredients added to shopping list',
+    };
+  },
+};
+
 // Export all tools
 export const allTools: ToolDefinition[] = [
+  // Recipe tools
   listRecipesTool,
   getRecipeTool,
   createRecipeTool,
   updateRecipeTool,
   deleteRecipeTool,
   uploadRecipeImageTool,
+  // Food tools
   listFoodsTool,
   createFoodTool,
+  // Shopping list tools
   listShoppingListsTool,
   getShoppingListTool,
   addShoppingListItemTool,
+  updateShoppingListItemTool,
+  deleteShoppingListItemTool,
+  addRecipeToShoppingListTool,
+  // Category tools
+  listCategoriesTool,
+  createCategoryTool,
+  // Tag tools
+  listTagsTool,
+  createTagTool,
+  // Recipe URL scraping tools
+  testScrapeUrlTool,
+  createRecipeFromUrlTool,
+  // Meal planning tools
+  listMealPlansTool,
+  getTodaysMealPlanTool,
+  createMealPlanTool,
+  deleteMealPlanTool,
 ];
 
 export function getToolByName(name: string): ToolDefinition | undefined {
