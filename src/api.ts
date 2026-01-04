@@ -124,7 +124,16 @@ export class MealieApi {
     if (!ingredients) return [];
 
     const parsed: unknown[] = [];
+    let pendingTitle: string | null = null;
+
     for (const ing of ingredients) {
+      // Check if this is a section header (title only, no ingredient data)
+      if (ing.title && !ing.originalText && !ing.food && !ing.quantity) {
+        // Save the title to apply to the next ingredient
+        pendingTitle = ing.title;
+        continue;
+      }
+
       // If originalText is provided, parse it
       if (ing.originalText) {
         const parsedIng = await this.parseIngredient(ing.originalText);
@@ -160,11 +169,19 @@ export class MealieApi {
           unit: unit?.id ? unit : null,
           food: food?.id ? food : null,
           note: parsedIng.note || '',
+          // Apply pending section title to first ingredient of section
+          title: pendingTitle || '',
         };
         parsed.push(cleanedIng);
+        pendingTitle = null;
       } else {
         // Otherwise, keep as-is (structured ingredient)
-        parsed.push(ing);
+        // Apply pending section title if present
+        const ingWithTitle = pendingTitle
+          ? { ...ing, title: pendingTitle }
+          : ing;
+        parsed.push(ingWithTitle);
+        pendingTitle = null;
       }
     }
     return parsed;

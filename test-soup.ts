@@ -73,21 +73,21 @@ async function createSoup() {
   console.log('Created:', slug);
 
   const recipe = await api.getRecipe(slug);
-  console.log('\n=== ' + recipe.name + ' ===\n');
+  console.log(`\n=== ${recipe.name} ===\n`);
 
   console.log('INGREDIENTS:');
   let currentSection = '';
   for (const ing of recipe.recipeIngredient || []) {
     if (ing.title && ing.title !== currentSection) {
       currentSection = ing.title;
-      console.log('\n' + ing.title);
+      console.log(`\n${ing.title}`);
       continue;
     }
     if (ing.title) continue; // Skip section headers after printing
     const qty = ing.quantity || '';
     const unit = ing.unit?.name || '';
     const food = ing.food?.name || '';
-    const note = ing.note ? '(' + ing.note + ')' : '';
+    const note = ing.note ? `(${ing.note})` : '';
     console.log('  •', [qty, unit, food, note].filter(Boolean).join(' '));
   }
 
@@ -95,9 +95,9 @@ async function createSoup() {
   let step = 1;
   for (const inst of recipe.recipeInstructions || []) {
     if (inst.title) {
-      console.log('\n--- ' + inst.title + ' ---');
+      console.log(`\n--- ${inst.title} ---`);
     }
-    console.log(step + '.', inst.text);
+    console.log(`${step}.`, inst.text);
     step++;
   }
 }
