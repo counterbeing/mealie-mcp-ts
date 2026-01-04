@@ -10,7 +10,7 @@
 
 import { MealieApi } from './src/api.js';
 import { loadConfig } from './src/config.js';
-import { allTools, getToolByName } from './src/tools.js';
+import { getToolByName } from './src/tools.js';
 
 const config = loadConfig();
 const api = new MealieApi(config);
@@ -195,7 +195,9 @@ async function runHappyPathTest() {
       const unit = ing.unit || '';
       const food = ing.food || '';
       const note = ing.note ? `(${ing.note})` : '';
-      console.log(`     • ${[qty, unit, food, note].filter(Boolean).join(' ')}`);
+      console.log(
+        `     • ${[qty, unit, food, note].filter(Boolean).join(' ')}`,
+      );
     }
   }
 
@@ -222,7 +224,7 @@ async function runHappyPathTest() {
   // ============================================
   // SUMMARY
   // ============================================
-  console.log('\n\n' + '='.repeat(50));
+  console.log(`\n\n${'='.repeat(50)}`);
   console.log('📊 TEST SUMMARY');
   console.log('='.repeat(50));
 
@@ -241,7 +243,7 @@ async function runHappyPathTest() {
     if (!test.pass) allPassed = false;
   }
 
-  console.log('\n' + '='.repeat(50));
+  console.log(`\n${'='.repeat(50)}`);
   if (allPassed) {
     console.log('🎉 ALL TESTS PASSED!');
   } else {

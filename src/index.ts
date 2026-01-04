@@ -76,7 +76,7 @@ async function main() {
                 text: JSON.stringify(
                   {
                     error: 'Invalid input',
-                    details: error.errors,
+                    details: error.issues,
                   },
                   null,
                   2,
@@ -96,16 +96,19 @@ async function main() {
   await server.connect(transport);
 }
 
-// Convert Zod schema to JSON Schema (simplified conversion)
+// Convert Zod schema to JSON Schema (simplified conversion for Zod v4)
 function zodToJsonSchema(schema: z.ZodType): Record<string, unknown> {
-  if (schema instanceof z.ZodObject) {
-    const shape = schema.shape as Record<string, z.ZodType>;
+  // Use Zod v4's toJSONSchema if available, otherwise manual conversion
+  const typeName = schema._zod?.def?.type ?? schema.constructor.name;
+
+  if (typeName === 'object' || schema instanceof z.ZodObject) {
+    const shape = (schema as z.ZodObject<z.ZodRawShape>).shape;
     const properties: Record<string, unknown> = {};
     const required: string[] = [];
 
     for (const [key, value] of Object.entries(shape)) {
-      properties[key] = zodToJsonSchema(value);
-      if (!isOptional(value)) {
+      properties[key] = zodToJsonSchema(value as z.ZodType);
+      if (!isOptional(value as z.ZodType)) {
         required.push(key);
       }
     }
@@ -117,47 +120,67 @@ function zodToJsonSchema(schema: z.ZodType): Record<string, unknown> {
     };
   }
 
-  if (schema instanceof z.ZodString) {
+  if (typeName === 'string' || schema instanceof z.ZodString) {
     const result: Record<string, unknown> = { type: 'string' };
     if (schema.description) result.description = schema.description;
     return result;
   }
 
-  if (schema instanceof z.ZodNumber) {
+  if (typeName === 'number' || schema instanceof z.ZodNumber) {
     const result: Record<string, unknown> = { type: 'number' };
     if (schema.description) result.description = schema.description;
     return result;
   }
 
-  if (schema instanceof z.ZodBoolean) {
+  if (typeName === 'boolean' || schema instanceof z.ZodBoolean) {
     const result: Record<string, unknown> = { type: 'boolean' };
     if (schema.description) result.description = schema.description;
     return result;
   }
 
-  if (schema instanceof z.ZodArray) {
-    const elementSchema = schema._def.type as z.ZodType;
+  if (typeName === 'array' || schema instanceof z.ZodArray) {
+    const def =
+      (schema as z.ZodArray<z.ZodType>)._zod?.def ??
+      (schema as z.ZodArray<z.ZodType>)._def;
+    const elementSchema = def?.element ?? def?.type;
     return {
       type: 'array',
-      items: zodToJsonSchema(elementSchema),
+      items: elementSchema
+        ? zodToJsonSchema(elementSchema)
+        : { type: 'object' },
       ...(schema.description ? { description: schema.description } : {}),
     };
   }
 
-  if (schema instanceof z.ZodOptional) {
-    return zodToJsonSchema(schema._def.innerType as z.ZodType);
+  if (typeName === 'optional' || schema instanceof z.ZodOptional) {
+    // biome-ignore lint/suspicious/noExplicitAny: accessing internal Zod structure
+    const def = (schema as any)._zod?.def ?? (schema as any)._def;
+    const innerType = def?.innerType;
+    return innerType ? zodToJsonSchema(innerType) : { type: 'object' };
   }
 
-  if (schema instanceof z.ZodDefault) {
-    const innerSchema = zodToJsonSchema(schema._def.innerType as z.ZodType);
+  if (typeName === 'default' || schema instanceof z.ZodDefault) {
+    // biome-ignore lint/suspicious/noExplicitAny: accessing internal Zod structure
+    const def = (schema as any)._zod?.def ?? (schema as any)._def;
+    const innerType = def?.innerType;
+    const innerSchema = innerType
+      ? zodToJsonSchema(innerType)
+      : { type: 'object' };
+    const defaultVal =
+      typeof def?.defaultValue === 'function'
+        ? def.defaultValue()
+        : def?.defaultValue;
     return {
       ...innerSchema,
-      default: schema._def.defaultValue(),
+      ...(defaultVal !== undefined ? { default: defaultVal } : {}),
     };
   }
 
-  if (schema instanceof z.ZodNullable) {
-    return zodToJsonSchema(schema._def.innerType as z.ZodType);
+  if (typeName === 'nullable' || schema instanceof z.ZodNullable) {
+    // biome-ignore lint/suspicious/noExplicitAny: accessing internal Zod structure
+    const def = (schema as any)._zod?.def ?? (schema as any)._def;
+    const innerType = def?.innerType;
+    return innerType ? zodToJsonSchema(innerType) : { type: 'object' };
   }
 
   // Fallback for complex types
@@ -165,9 +188,10 @@ function zodToJsonSchema(schema: z.ZodType): Record<string, unknown> {
 }
 
 function isOptional(schema: z.ZodType): boolean {
-  if (schema instanceof z.ZodOptional) return true;
-  if (schema instanceof z.ZodDefault) return true;
-  if (schema instanceof z.ZodNullable) return true;
+  const typeName = schema._zod?.def?.type ?? schema.constructor.name;
+  if (typeName === 'optional' || schema instanceof z.ZodOptional) return true;
+  if (typeName === 'default' || schema instanceof z.ZodDefault) return true;
+  if (typeName === 'nullable' || schema instanceof z.ZodNullable) return true;
   return false;
 }
 

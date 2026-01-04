@@ -1,5 +1,5 @@
 {
-  "$schema": "https://biomejs.dev/schemas/1.9.4/schema.json",
+  "$schema": "https://biomejs.dev/schemas/2.3.11/schema.json",
   "vcs": {
     "enabled": true,
     "clientKind": "git",
@@ -7,12 +7,13 @@
   },
   "files": {
     "ignoreUnknown": false,
-    "ignore": [
-      "dist",
-      "node_modules",
-      "openapi.json",
-      ".claude",
-      "pnpm-build-allowed.json"
+    "includes": [
+      "**",
+      "!**/dist",
+      "!**/node_modules",
+      "!**/openapi.json",
+      "!**/.claude",
+      "!**/pnpm-build-allowed.json"
     ]
   },
   "formatter": {
@@ -20,9 +21,7 @@
     "indentStyle": "space",
     "indentWidth": 2
   },
-  "organizeImports": {
-    "enabled": true
-  },
+  "assist": { "actions": { "source": { "organizeImports": "on" } } },
   "linter": {
     "enabled": true,
     "rules": {

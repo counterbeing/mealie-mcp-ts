@@ -141,7 +141,7 @@ export const recipeSchema = recipeSummarySchema.extend({
     )
     .optional()
     .default([]),
-  extras: z.record(z.unknown()).nullish().default({}),
+  extras: z.record(z.string(), z.unknown()).default({}),
 });
 
 // Pagination wrapper
@@ -177,7 +177,7 @@ export const shoppingListItemSchema = z.object({
   labelId: z.string().uuid().nullish(),
   unitId: z.string().uuid().nullish(),
   isFood: z.boolean().optional(),
-  extras: z.record(z.unknown()).nullish().default({}),
+  extras: z.record(z.string(), z.unknown()).default({}),
 });
 
 // Shopping List Summary schema
@@ -187,7 +187,7 @@ export const shoppingListSummarySchema = z.object({
   userId: z.string().uuid().optional(),
   householdId: z.string().uuid().optional(),
   name: z.string().nullish(),
-  extras: z.record(z.unknown()).nullish().default({}),
+  extras: z.record(z.string(), z.unknown()).default({}),
   createdAt: z.string().nullish(),
   updatedAt: z.string().nullish(),
 });
