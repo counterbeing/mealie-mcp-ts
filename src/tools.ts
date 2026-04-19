@@ -34,19 +34,27 @@ export const listRecipesTool: ToolDefinition = {
   inputSchema: listRecipesSchema,
   handler: async (api, input) => {
     const params = listRecipesSchema.parse(input);
-    const result = await api.listRecipes(params.page, params.perPage);
+    const [result, groupSlug] = await Promise.all([
+      api.listRecipes(params.page, params.perPage),
+      api.getGroupSlug(),
+    ]);
+    const baseUrl = api.getBaseUrl();
     return {
       page: result.page,
       perPage: result.per_page,
       total: result.total,
       totalPages: result.total_pages,
       recipes: result.items.map((r) => ({
+        id: r.id,
         name: r.name,
         slug: r.slug,
         description: r.description,
         totalTime: r.totalTime,
         rating: r.rating,
         dateAdded: r.dateAdded,
+        groupId: r.groupId,
+        householdId: r.householdId,
+        url: `${baseUrl}/g/${groupSlug}/r/${r.slug}`,
       })),
     };
   },
@@ -64,8 +72,13 @@ export const getRecipeTool: ToolDefinition = {
   inputSchema: getRecipeSchema,
   handler: async (api, input) => {
     const params = getRecipeSchema.parse(input);
-    const recipe = await api.getRecipe(params.slug);
+    const [recipe, groupSlug] = await Promise.all([
+      api.getRecipe(params.slug),
+      api.getGroupSlug(),
+    ]);
+    const baseUrl = api.getBaseUrl();
     return {
+      id: recipe.id,
       name: recipe.name,
       slug: recipe.slug,
       description: recipe.description,
@@ -74,6 +87,9 @@ export const getRecipeTool: ToolDefinition = {
       prepTime: recipe.prepTime,
       cookTime: recipe.cookTime,
       rating: recipe.rating,
+      groupId: recipe.groupId,
+      householdId: recipe.householdId,
+      url: `${baseUrl}/g/${groupSlug}/r/${recipe.slug}`,
       ingredients: recipe.recipeIngredient?.map((i) => ({
         quantity: i.quantity,
         unit: i.unit?.name,
@@ -684,6 +700,39 @@ export const addRecipeToShoppingListTool: ToolDefinition = {
   },
 };
 
+// Get current user tool (for debugging group context)
+const getCurrentUserSchema = z.object({});
+
+export const getCurrentUserTool: ToolDefinition = {
+  name: 'get_current_user',
+  description:
+    'Get information about the current API user, including their group and household. Useful for debugging permission issues when recipes or other items are not visible.',
+  inputSchema: getCurrentUserSchema,
+  handler: async (api) => {
+    const user = await api.getCurrentUser();
+    return {
+      user: {
+        id: user.id,
+        username: user.username,
+        fullName: user.fullName,
+        email: user.email,
+        admin: user.admin,
+      },
+      group: {
+        name: user.group,
+        id: user.groupId,
+        slug: user.groupSlug,
+      },
+      household: {
+        name: user.household,
+        id: user.householdId,
+        slug: user.householdSlug,
+      },
+      note: 'Recipes and other data are scoped to this group. Ensure your browser session is viewing the same group.',
+    };
+  },
+};
+
 // Export all tools
 export const allTools: ToolDefinition[] = [
   // Recipe tools
@@ -717,6 +766,8 @@ export const allTools: ToolDefinition[] = [
   getTodaysMealPlanTool,
   createMealPlanTool,
   deleteMealPlanTool,
+  // User/debug tools
+  getCurrentUserTool,
 ];
 
 export function getToolByName(name: string): ToolDefinition | undefined {

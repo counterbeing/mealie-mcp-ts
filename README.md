@@ -76,7 +76,7 @@ docker run -e MEALIE_URL=http://host.docker.internal:9925 \
            mealie-mcp
 ```
 
-## Available Tools
+## Available Tools (25 total)
 
 ### Recipes (6 tools)
 
@@ -131,6 +131,20 @@ docker run -e MEALIE_URL=http://host.docker.internal:9925 \
 |------|-------------|
 | `list_foods` | List all foods/ingredients |
 | `create_food` | Create a new food item |
+
+### Debugging (1 tool)
+
+| Tool | Description |
+|------|-------------|
+| `get_current_user` | Get current API user info including group and household context |
+
+## Important: Group Context
+
+Mealie scopes data by **group** and **household**. When you create an API token, it inherits the group context of your current session. If recipes or other items you create via the API aren't visible in your browser:
+
+1. Use the `get_current_user` tool to see which group the API token is associated with
+2. Ensure your browser session is viewing the same group (check the URL path)
+3. If needed, switch groups in Mealie's UI, then generate a new API token
 
 ## Development
 

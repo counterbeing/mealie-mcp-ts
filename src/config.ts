@@ -32,6 +32,8 @@ const ALL_TOOLS = [
   'get_todays_meal_plan',
   'create_meal_plan',
   'delete_meal_plan',
+  // User/debug tools
+  'get_current_user',
 ] as const;
 
 export type ToolName = (typeof ALL_TOOLS)[number];

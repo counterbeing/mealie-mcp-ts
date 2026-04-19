@@ -445,3 +445,20 @@ export type UpdateShoppingListItemInput = z.infer<
   typeof updateShoppingListItemInputSchema
 >;
 export type AddRecipeToListInput = z.infer<typeof addRecipeToListInputSchema>;
+
+// Current user schema (for debugging group context)
+export const currentUserSchema = z.object({
+  id: z.string().uuid(),
+  username: z.string(),
+  fullName: z.string(),
+  email: z.string(),
+  admin: z.boolean(),
+  group: z.string(),
+  groupId: z.string().uuid(),
+  groupSlug: z.string(),
+  household: z.string(),
+  householdId: z.string().uuid(),
+  householdSlug: z.string(),
+});
+
+export type CurrentUser = z.infer<typeof currentUserSchema>;

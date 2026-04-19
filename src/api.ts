@@ -6,8 +6,10 @@ import {
   type CategoryPagination,
   type CreateMealPlanInput,
   type CreateRecipeInput,
+  type CurrentUser,
   categoryOutSchema,
   categoryPaginationSchema,
+  currentUserSchema,
   type FoodPagination,
   foodPaginationSchema,
   type IngredientFood,
@@ -77,10 +79,29 @@ export class MealieApiError extends Error {
 export class MealieApi {
   private baseUrl: string;
   private apiKey: string;
+  private groupSlug: string | null = null;
 
   constructor(config: Config) {
     this.baseUrl = config.mealieUrl;
     this.apiKey = config.mealieApiKey;
+  }
+
+  getBaseUrl(): string {
+    return this.baseUrl;
+  }
+
+  async getGroupSlug(): Promise<string> {
+    if (!this.groupSlug) {
+      const user = await this.getCurrentUser();
+      this.groupSlug = user.groupSlug;
+    }
+    return this.groupSlug;
+  }
+
+  buildRecipeUrl(slug: string): string {
+    // Use cached group slug or fall back to 'home'
+    const groupSlug = this.groupSlug || 'home';
+    return `${this.baseUrl}/g/${groupSlug}/r/${slug}`;
   }
 
   private async request<T>(
@@ -570,5 +591,10 @@ export class MealieApi {
       },
     );
     return shoppingListSchema.parse(data);
+  }
+
+  async getCurrentUser(): Promise<CurrentUser> {
+    const data = await this.request<unknown>('/api/users/self');
+    return currentUserSchema.parse(data);
   }
 }
