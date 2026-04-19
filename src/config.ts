@@ -60,6 +60,33 @@ const configSchema = z.object({
       }
       return tools;
     }),
+  transport: z
+    .enum(['stdio', 'http'])
+    .optional()
+    .default('stdio'),
+  port: z
+    .string()
+    .optional()
+    .transform((val) => {
+      if (!val || val.trim() === '') return 3000;
+      const parsed = Number.parseInt(val, 10);
+      if (!Number.isFinite(parsed) || parsed <= 0 || parsed > 65535) {
+        throw new Error(`PORT must be a valid port number, got: ${val}`);
+      }
+      return parsed;
+    }),
+  allowedHosts: z
+    .string()
+    .optional()
+    .transform((val) => {
+      if (!val || val.trim() === '') {
+        return ['localhost', '127.0.0.1'];
+      }
+      return val
+        .split(',')
+        .map((h) => h.trim())
+        .filter((h) => h.length > 0);
+    }),
 });
 
 export type Config = z.infer<typeof configSchema>;
@@ -69,6 +96,9 @@ export function loadConfig(): Config {
     mealieUrl: process.env.MEALIE_URL,
     mealieApiKey: process.env.MEALIE_API_KEY,
     enabledTools: process.env.ENABLED_TOOLS,
+    transport: process.env.MCP_TRANSPORT,
+    port: process.env.PORT,
+    allowedHosts: process.env.ALLOWED_HOSTS,
   });
 
   if (!result.success) {

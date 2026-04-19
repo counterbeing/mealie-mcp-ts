@@ -37,6 +37,10 @@ COPY --from=builder /app/dist ./dist
 
 # Set environment variables
 ENV NODE_ENV=production
+ENV MCP_TRANSPORT=http
+ENV PORT=3000
+
+EXPOSE 3000
 
 # Run the server
 ENTRYPOINT ["node", "dist/index.js"]

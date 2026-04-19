@@ -64,16 +64,61 @@ Add to your Claude Desktop configuration (`~/Library/Application Support/Claude/
 }
 ```
 
-### With Docker
+### Remote HTTP mode (e.g. on a NAS)
+
+For running the server on a different machine (Synology NAS, home server, etc.), use the HTTP transport. The SDK's Streamable HTTP transport lets Claude Desktop connect over the network.
+
+Set these env vars:
 
 ```bash
-# Build the image
+MCP_TRANSPORT=http
+PORT=3000
+ALLOWED_HOSTS=nas.local,192.168.1.50   # Host header allowlist (DNS rebind protection)
+MEALIE_URL=http://mealie:9000           # service name if on same compose network
+MEALIE_API_KEY=...
+```
+
+Claude Desktop config:
+
+```json
+{
+  "mcpServers": {
+    "mealie": {
+      "url": "http://nas.local:3000/mcp"
+    }
+  }
+}
+```
+
+### With Docker
+
+The bundled `Dockerfile` defaults to HTTP transport on port 3000.
+
+```bash
 docker build -t mealie-mcp .
 
-# Run with environment variables
-docker run -e MEALIE_URL=http://host.docker.internal:9925 \
-           -e MEALIE_API_KEY=your-api-key \
-           mealie-mcp
+docker run -p 3000:3000 \
+  -e MEALIE_URL=http://host.docker.internal:9925 \
+  -e MEALIE_API_KEY=your-api-key \
+  -e ALLOWED_HOSTS=localhost \
+  mealie-mcp
+```
+
+### Compose service (attach to existing Mealie stack)
+
+```yaml
+  mealie-mcp:
+    build: ./mealie-mcp
+    container_name: mealie-mcp
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - MEALIE_URL=http://mealie:9000
+      - MEALIE_API_KEY=${MEALIE_API_KEY}
+      - ALLOWED_HOSTS=nas.local,192.168.1.50
+    depends_on:
+      - mealie
 ```
 
 ## Available Tools (25 total)
