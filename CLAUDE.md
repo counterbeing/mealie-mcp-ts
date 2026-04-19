@@ -16,8 +16,8 @@ git tag v1.2.3
 git push origin v1.2.3
 ```
 
-Produces these tags on Docker Hub:
-- `<user>/mealie-mcp:v1.2.3` (exact)
+Produces these tags on Docker Hub (note: metadata-action strips the `v` prefix):
+- `<user>/mealie-mcp:1.2.3` (exact)
 - `<user>/mealie-mcp:1.2` (minor-floating)
 - `<user>/mealie-mcp:latest`
 

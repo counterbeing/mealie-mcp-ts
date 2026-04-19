@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { MealieApi } from './api.js';
+import { type MealieApi, MealieApiError } from './api.js';
 import type { ToolName } from './config.js';
 import {
   addRecipeToListInputSchema,
@@ -491,16 +491,21 @@ const testScrapeUrlSchema = z.object({
 export const testScrapeUrlTool: ToolDefinition = {
   name: 'test_scrape_url',
   description:
-    'Test if a URL can be scraped for recipe data without actually creating a recipe. Useful for validating URLs before importing.',
+    'Test if a URL can be scraped for recipe data without actually creating a recipe. Useful for validating URLs before importing. Returns success:false when the scraper cannot parse the site.',
   inputSchema: testScrapeUrlSchema,
   handler: async (api, input) => {
     const params = testScrapeUrlSchema.parse(input);
     const result = await api.testScrapeUrl(params.url);
+    // Mealie returns a string like "recipe_scrapers was unable to scrape this URL"
+    // when the scraper can't parse the site, and a structured object on success.
+    const scrapeFailed = typeof result === 'string' || !result;
     return {
-      success: true,
+      success: !scrapeFailed,
       url: params.url,
       scrapedData: result,
-      message: 'URL scrape test completed successfully',
+      message: scrapeFailed
+        ? `Mealie's scraper cannot parse this URL: ${typeof result === 'string' ? result : 'empty response'}. The site's schema.org recipe markup may be missing or non-standard. Try a URL from a well-supported site (allrecipes.com, nytimes.com/cooking, foodnetwork.com, seriouseats.com, bbcgoodfood.com) or fetch the content manually and use create_recipe.`
+        : 'URL scrape test completed successfully',
     };
   },
 };
@@ -517,16 +522,47 @@ const createRecipeFromUrlSchema = z.object({
 export const createRecipeFromUrlTool: ToolDefinition = {
   name: 'create_recipe_from_url',
   description:
-    'Create a new recipe by scraping data from a URL. Supports most recipe websites that use structured data (schema.org Recipe format).',
+    'Create a new recipe by scraping data from a URL. Supports most recipe websites that use structured data (schema.org Recipe format). On failure, returns success:false with diagnostic info — check that before retrying or falling back to create_recipe.',
   inputSchema: createRecipeFromUrlSchema,
   handler: async (api, input) => {
     const params = createRecipeFromUrlSchema.parse(input);
-    const slug = await api.createRecipeFromUrl(params.url, params.includeTags);
-    return {
-      success: true,
-      slug,
-      message: `Recipe imported successfully from ${params.url}`,
-    };
+    try {
+      const slug = await api.createRecipeFromUrl(
+        params.url,
+        params.includeTags,
+      );
+      return {
+        success: true,
+        slug,
+        message: `Recipe imported successfully from ${params.url}`,
+      };
+    } catch (error) {
+      if (error instanceof MealieApiError && error.statusCode === 400) {
+        // Mealie's 400 is opaque. Probe the scraper to surface the real reason.
+        let scraperDetail: string | null = null;
+        try {
+          const scrapeResult = await api.testScrapeUrl(params.url);
+          if (typeof scrapeResult === 'string') {
+            scraperDetail = scrapeResult;
+          }
+        } catch {
+          // Ignore diagnostic failures; fall through with whatever we know.
+        }
+        return {
+          success: false,
+          url: params.url,
+          reason: scraperDetail
+            ? 'scraper_unsupported_site'
+            : 'mealie_rejected_url',
+          scraperOutput: scraperDetail,
+          statusCode: error.statusCode,
+          message: scraperDetail
+            ? `Mealie's scraper cannot parse this URL: "${scraperDetail}". Try a URL from a well-supported site (allrecipes.com, nytimes.com/cooking, foodnetwork.com, seriouseats.com, bbcgoodfood.com), or fetch the recipe content manually and use create_recipe with structured ingredients and instructions. Do NOT retry create_recipe_from_url on the same URL.`
+            : `Mealie rejected the URL import (400). The URL may be malformed or inaccessible. Consider fetching the page manually and using create_recipe.`,
+        };
+      }
+      throw error;
+    }
   },
 };
 
