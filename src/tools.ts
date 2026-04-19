@@ -113,7 +113,7 @@ export const getRecipeTool: ToolDefinition = {
 export const createRecipeTool: ToolDefinition = {
   name: 'create_recipe',
   description:
-    'Create a new recipe with name, ingredients, and instructions. Ingredients support quantity, unit, food, and notes. Instructions support section titles and text.',
+    'Create a new recipe with name, ingredients, and instructions. For ingredients, prefer passing originalText (e.g. "2 cups flour") and let the server parse — the structured {quantity, unit, food} form also works but originalText is simpler and handles unknown units/foods automatically.',
   inputSchema: createRecipeInputSchema,
   handler: async (api, input) => {
     const params = createRecipeInputSchema.parse(input);
@@ -130,7 +130,7 @@ export const createRecipeTool: ToolDefinition = {
 export const updateRecipeTool: ToolDefinition = {
   name: 'update_recipe',
   description:
-    'Update an existing recipe by slug. Only provided fields will be updated.',
+    'Update an existing recipe by slug. Only provided fields will be updated. For ingredients, prefer passing originalText (e.g. "2 cups flour") over structured {quantity, unit, food} — the server parses originalText and auto-resolves unit+food. Structured form also works and is auto-normalized, but originalText is simpler.',
   inputSchema: updateRecipeInputSchema,
   handler: async (api, input) => {
     const params = updateRecipeInputSchema.parse(input);

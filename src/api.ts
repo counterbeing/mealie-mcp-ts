@@ -163,30 +163,42 @@ export class MealieApi {
     let pendingTitle: string | null = null;
 
     for (const ing of ingredients) {
-      // Check if this is a section header (title only, no ingredient data)
+      // Section header: title only, no ingredient data
       if (ing.title && !ing.originalText && !ing.food && !ing.quantity) {
-        // Save the title to apply to the next ingredient
         pendingTitle = ing.title;
         continue;
       }
 
-      // If originalText is provided, parse it
-      if (ing.originalText) {
-        const parsedIng = await this.parseIngredient(ing.originalText);
+      // Normalize structured-with-name-only ingredients into originalText so
+      // the parser path can resolve/create missing unit+food IDs. Without this,
+      // Mealie 500s with ValueError when it sees {name: "flank steak"} refs
+      // that don't map to existing records.
+      let textToParse = ing.originalText;
+      if (!textToParse && (ing.unit?.name || ing.food?.name)) {
+        textToParse = [
+          ing.quantity != null ? String(ing.quantity) : '',
+          ing.unit?.name ?? '',
+          ing.food?.name ?? '',
+          ing.note ?? '',
+        ]
+          .filter((part) => part.trim() !== '')
+          .join(' ')
+          .trim();
+      }
 
-        // Create unit if it doesn't exist
+      if (textToParse) {
+        const parsedIng = await this.parseIngredient(textToParse);
+
         let unit = parsedIng.unit;
         if (unit && !unit.id && unit.name) {
           try {
             const created = await this.createUnit(unit.name);
             unit = { ...unit, id: created.id };
           } catch {
-            // Unit creation failed (might already exist), keep as null
             unit = null;
           }
         }
 
-        // Create food if it doesn't exist
         let food = parsedIng.food;
         if (food && !food.id && food.name) {
           try {
@@ -195,28 +207,21 @@ export class MealieApi {
               food = { ...food, id: created.id };
             }
           } catch {
-            // Food creation failed (might already exist), keep as null
             food = null;
           }
         }
 
-        const cleanedIng = {
+        parsed.push({
           ...parsedIng,
           unit: unit?.id ? unit : null,
           food: food?.id ? food : null,
           note: parsedIng.note || '',
-          // Apply pending section title to first ingredient of section
           title: pendingTitle || '',
-        };
-        parsed.push(cleanedIng);
+        });
         pendingTitle = null;
       } else {
-        // Otherwise, keep as-is (structured ingredient)
-        // Apply pending section title if present
-        const ingWithTitle = pendingTitle
-          ? { ...ing, title: pendingTitle }
-          : ing;
-        parsed.push(ingWithTitle);
+        // Note-only or otherwise trivially-structured ingredient — pass through
+        parsed.push(pendingTitle ? { ...ing, title: pendingTitle } : ing);
         pendingTitle = null;
       }
     }
