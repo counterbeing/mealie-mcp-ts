@@ -35,7 +35,11 @@ To update a running NAS deployment after publishing: Container Manager → Proje
 - `pnpm dev` — stdio mode (default)
 - `MCP_TRANSPORT=http PORT=3000 ALLOWED_HOSTS=localhost pnpm dev` — HTTP mode
 - `pnpm run build` — typecheck + compile to `dist/`
+- `pnpm test` — run all tool tests (vitest)
+- `pnpm run test:watch` — watch mode
 - `pnpm run lint` / `pnpm run format` — Biome
+
+Tests live in `tests/` and mock `MealieApi`. Every tool has a happy-path test; URL-scraping tools have extra coverage for error paths. CI runs tests on every push/PR and gates Docker publishes on them.
 
 Test an HTTP-mode server:
 ```bash
