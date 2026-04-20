@@ -566,6 +566,61 @@ export const createRecipeFromUrlTool: ToolDefinition = {
   },
 };
 
+const createRecipeFromHtmlSchema = z.object({
+  html: z
+    .string()
+    .min(1)
+    .describe(
+      "Raw HTML of a recipe page — the full HTML string, typically obtained from a browser tool when the site blocks direct MCP fetches (e.g. AllRecipes). The server will try Mealie's scraper first, then extract schema.org JSON-LD Recipe data directly.",
+    ),
+  sourceUrl: z
+    .string()
+    .url()
+    .optional()
+    .describe(
+      'Original URL of the page — used as recipe source reference and for image resolution. Optional but recommended.',
+    ),
+  includeTags: z
+    .boolean()
+    .optional()
+    .default(false)
+    .describe('Whether to import tags.'),
+});
+
+export const createRecipeFromHtmlTool: ToolDefinition = {
+  name: 'create_recipe_from_html',
+  description:
+    "Create a recipe from raw HTML that you fetched yourself. Use this when create_recipe_from_url fails because the MCP server can't reach the site (anti-bot, geo-block, etc.). Fetch the HTML with your own browser tool and pass it here — the server parses it via Mealie or by extracting schema.org JSON-LD directly.",
+  inputSchema: createRecipeFromHtmlSchema,
+  handler: async (api, input) => {
+    const params = createRecipeFromHtmlSchema.parse(input);
+    try {
+      const slug = await api.createRecipeFromHtml(
+        params.html,
+        params.sourceUrl,
+        params.includeTags,
+      );
+      return {
+        success: true,
+        slug,
+        message: `Recipe imported from provided HTML${params.sourceUrl ? ` (source: ${params.sourceUrl})` : ''}`,
+      };
+    } catch (err) {
+      if (err instanceof MealieApiError && err.statusCode === 400) {
+        return {
+          success: false,
+          reason: 'html_unparseable',
+          sourceUrl: params.sourceUrl,
+          message:
+            "Could not extract recipe from HTML. No recognized schema.org Recipe markup found, and Mealie's scraper refused. If this is a valid recipe page, try using create_recipe manually with the fields you can identify.",
+          details: err.response,
+        };
+      }
+      throw err;
+    }
+  },
+};
+
 // ============ Meal Planning ============
 
 const listMealPlansSchema = z.object({
@@ -850,6 +905,7 @@ export const allTools: ToolDefinition[] = [
   // Recipe URL scraping tools
   testScrapeUrlTool,
   createRecipeFromUrlTool,
+  createRecipeFromHtmlTool,
   // Meal planning tools
   listMealPlansTool,
   getTodaysMealPlanTool,

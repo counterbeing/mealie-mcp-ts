@@ -750,7 +750,7 @@ export class MealieApi {
     const directHtml = await fetchPageAsBrowser(url);
     if (directHtml) {
       try {
-        const slug = await this.createRecipeFromHtml(url, directHtml, includeTags);
+        const slug = await this.postHtmlToMealie(url, directHtml, includeTags);
         logInfo('url_import.direct_html_ok', { url, bytes: directHtml.length });
         return slug;
       } catch (err) {
@@ -791,7 +791,7 @@ export class MealieApi {
     const waybackHtml = await fetchFromWayback(url);
     if (waybackHtml) {
       try {
-        const slug = await this.createRecipeFromHtml(url, waybackHtml, includeTags);
+        const slug = await this.postHtmlToMealie(url, waybackHtml, includeTags);
         logInfo('url_import.wayback_html_ok', { url, bytes: waybackHtml.length });
         return slug;
       } catch {
@@ -819,7 +819,7 @@ export class MealieApi {
     );
   }
 
-  private async createRecipeFromHtml(
+  private async postHtmlToMealie(
     url: string,
     html: string,
     includeTags: boolean,
@@ -833,6 +833,57 @@ export class MealieApi {
         includeCategories: false,
       }),
     });
+  }
+
+  // Import a recipe from raw HTML the caller already fetched. Runs the same
+  // Mealie /html-or-json → JSON-LD fallback cascade used by createRecipeFromUrl.
+  // Useful when the caller (e.g. Hermes with its browser tool) can reach a site
+  // that the MCP's own fetch can't.
+  async createRecipeFromHtml(
+    html: string,
+    sourceUrl: string | undefined,
+    includeTags = false,
+  ): Promise<string> {
+    const refUrl = sourceUrl ?? 'about:blank';
+    const tried: string[] = [];
+
+    try {
+      const slug = await this.postHtmlToMealie(refUrl, html, includeTags);
+      logInfo('html_import.mealie_ok', { url: refUrl, bytes: html.length });
+      return slug;
+    } catch (err) {
+      tried.push('mealie_html');
+      logInfo('html_import.mealie_rejected', {
+        url: refUrl,
+        err: err instanceof Error ? err.message : 'unknown',
+      });
+    }
+
+    const extracted = extractRecipeFromJsonLd(html);
+    if (extracted) {
+      try {
+        const slug = await this.createRecipeFromExtracted(extracted, refUrl);
+        logInfo('html_import.json_ld_ok', {
+          url: refUrl,
+          ingredients: extracted.ingredients.length,
+        });
+        return slug;
+      } catch (err) {
+        tried.push('json_ld');
+        logError('html_import.json_ld_failed', {
+          url: refUrl,
+          err: err instanceof Error ? err.message : 'unknown',
+        });
+      }
+    } else {
+      tried.push('no_json_ld_found');
+    }
+
+    throw new MealieApiError(
+      `Could not create recipe from provided HTML — tried: ${tried.join(', ')}`,
+      400,
+      { sourceUrl, tried },
+    );
   }
 
   // Create a recipe from our own JSON-LD extraction. Uses the standard

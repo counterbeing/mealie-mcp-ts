@@ -76,8 +76,8 @@ async function runTool(
 }
 
 describe('tool registry', () => {
-  it('registers exactly 25 tools', () => {
-    expect(allTools).toHaveLength(26);
+  it('registers all expected tools', () => {
+    expect(allTools).toHaveLength(27);
   });
 
   it('every tool has a unique name', () => {

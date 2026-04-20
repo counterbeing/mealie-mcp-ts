@@ -27,6 +27,7 @@ const ALL_TOOLS = [
   // Recipe URL scraping tools
   'test_scrape_url',
   'create_recipe_from_url',
+  'create_recipe_from_html',
   // Meal planning tools
   'list_meal_plans',
   'get_todays_meal_plan',
