@@ -1,6 +1,6 @@
 {
   "name": "mealie-mcp",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "description": "MCP server for Mealie meal planning and recipe management",
   "type": "module",
   "main": "dist/index.js",

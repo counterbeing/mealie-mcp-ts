@@ -139,9 +139,13 @@ cmd_release() {
   pnpm run build
   hdr "Bumping package.json to $version"
   node -e "const p=require('./package.json');p.version='$version';require('fs').writeFileSync('./package.json', JSON.stringify(p,null,2)+'\n')"
+  # Stage all tracked changes (src, tests, docs, config) + the version bump.
+  # Release commits must include in-flight source changes or the tagged image
+  # won't contain them (learned the hard way — v1.0.4..v1.0.6 were empty bumps).
+  git add -u
   git add package.json
   if ! git diff --cached --quiet; then
-    git commit -m "Bump version to $version"
+    git commit -m "Release v$version"
   fi
   hdr "Tagging v$version and pushing"
   git push origin master

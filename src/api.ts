@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { Config } from './config.js';
+import { logError, logInfo } from './logger.js';
 import {
   type AddRecipeToListInput,
   type CategoryOut,
@@ -63,6 +64,196 @@ interface ParsedIngredient {
 
 interface ParsedIngredientResponse {
   ingredient: ParsedIngredient;
+}
+
+// Realistic desktop Chrome UA — sites commonly block Python/scraper UAs
+// (e.g. AllRecipes returns 403 to Mealie's recipe_scrapers default).
+const BROWSER_USER_AGENT =
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+
+const BROWSER_ACCEPT_HEADERS: Record<string, string> = {
+  'User-Agent': BROWSER_USER_AGENT,
+  Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+  'Accept-Language': 'en-US,en;q=0.9',
+};
+
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs = 15000,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function fetchPageAsBrowser(url: string): Promise<string | null> {
+  try {
+    const res = await fetchWithTimeout(url, { headers: BROWSER_ACCEPT_HEADERS });
+    if (!res.ok) return null;
+    return await res.text();
+  } catch {
+    return null;
+  }
+}
+
+interface ExtractedRecipe {
+  name: string;
+  description?: string;
+  ingredients: string[];
+  instructions: string[];
+  recipeYield?: string;
+  totalTime?: string;
+  prepTime?: string;
+  cookTime?: string;
+  imageUrl?: string;
+}
+
+function parseIsoDuration(iso: unknown): string | undefined {
+  if (!iso || typeof iso !== 'string') return undefined;
+  const m = iso.match(/^PT(?:(\d+)H)?(?:(\d+)M)?/);
+  if (!m) return undefined;
+  const hours = Number.parseInt(m[1] ?? '0', 10);
+  const mins = Number.parseInt(m[2] ?? '0', 10);
+  const total = hours * 60 + mins;
+  return total > 0 ? `${total} minutes` : undefined;
+}
+
+function extractImageUrl(img: unknown): string | undefined {
+  if (!img) return undefined;
+  if (typeof img === 'string') return img;
+  if (Array.isArray(img)) {
+    for (const item of img) {
+      const url = extractImageUrl(item);
+      if (url) return url;
+    }
+    return undefined;
+  }
+  if (typeof img === 'object') {
+    const obj = img as Record<string, unknown>;
+    if (typeof obj.url === 'string') return obj.url;
+    if (typeof obj['@id'] === 'string') return obj['@id'] as string;
+  }
+  return undefined;
+}
+
+function findRecipeNode(data: unknown): Record<string, unknown> | null {
+  if (!data || typeof data !== 'object') return null;
+  if (Array.isArray(data)) {
+    for (const item of data) {
+      const found = findRecipeNode(item);
+      if (found) return found;
+    }
+    return null;
+  }
+  const obj = data as Record<string, unknown>;
+  const t = obj['@type'];
+  const types = Array.isArray(t) ? t : [t];
+  if (types.includes('Recipe')) return obj;
+  if (obj['@graph']) return findRecipeNode(obj['@graph']);
+  return null;
+}
+
+// Extract a schema.org Recipe from any JSON-LD blocks in the HTML. Handles the
+// common case where a site has valid structured data but Mealie's
+// recipe_scrapers refuses because the domain isn't whitelisted.
+function extractRecipeFromJsonLd(html: string): ExtractedRecipe | null {
+  const scriptRe = /<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
+  for (const match of html.matchAll(scriptRe)) {
+    const jsonStr = (match[1] ?? '').trim();
+    if (!jsonStr) continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(jsonStr);
+    } catch {
+      continue;
+    }
+    const recipe = findRecipeNode(parsed);
+    if (!recipe) continue;
+
+    const ingredients = Array.isArray(recipe.recipeIngredient)
+      ? recipe.recipeIngredient.filter((i): i is string => typeof i === 'string')
+      : [];
+
+    const instructions: string[] = [];
+    const rawInstructions = recipe.recipeInstructions;
+    if (Array.isArray(rawInstructions)) {
+      for (const step of rawInstructions) {
+        if (typeof step === 'string') {
+          instructions.push(step);
+        } else if (step && typeof step === 'object') {
+          const s = step as Record<string, unknown>;
+          if (typeof s.text === 'string') instructions.push(s.text);
+          else if (typeof s.name === 'string') instructions.push(s.name);
+          // ignore nested HowToSection / etc. for now
+        }
+      }
+    } else if (typeof rawInstructions === 'string') {
+      // Split on newlines as a best-effort
+      for (const line of rawInstructions.split(/\n+/)) {
+        const trimmed = line.trim();
+        if (trimmed) instructions.push(trimmed);
+      }
+    }
+
+    if (!recipe.name || !ingredients.length) continue;
+
+    return {
+      name: String(recipe.name),
+      description:
+        typeof recipe.description === 'string' ? recipe.description : undefined,
+      ingredients,
+      instructions,
+      recipeYield:
+        recipe.recipeYield != null ? String(recipe.recipeYield) : undefined,
+      totalTime: parseIsoDuration(recipe.totalTime),
+      prepTime: parseIsoDuration(recipe.prepTime),
+      cookTime: parseIsoDuration(recipe.cookTime),
+      imageUrl: extractImageUrl(recipe.image),
+    };
+  }
+  return null;
+}
+
+async function fetchFromWayback(url: string): Promise<string | null> {
+  try {
+    const availRes = await fetchWithTimeout(
+      `https://archive.org/wayback/available?url=${encodeURIComponent(url)}`,
+      { headers: BROWSER_ACCEPT_HEADERS },
+    );
+    if (!availRes.ok) return null;
+    const avail = (await availRes.json()) as {
+      archived_snapshots?: { closest?: { url: string; status: string } };
+    };
+    const snapshotUrl = avail.archived_snapshots?.closest?.url;
+    if (!snapshotUrl) return null;
+    // /id_/ flag serves the original archived content without Wayback's frame injection
+    const rawUrl = snapshotUrl.replace(/\/web\/(\d+)\//, '/web/$1id_/');
+    const pageRes = await fetchWithTimeout(rawUrl, {
+      headers: BROWSER_ACCEPT_HEADERS,
+    });
+    if (!pageRes.ok) return null;
+    return await pageRes.text();
+  } catch {
+    return null;
+  }
+}
+
+// Case-insensitive match that also tolerates simple English plural differences:
+// exact match, candidate+s, candidate+es, target+s, target+es. Intentionally
+// conservative — we'd rather miss a dedupe than falsely merge "glass" with "gla".
+function matchesNameVariant(candidate: string, target: string): boolean {
+  const c = candidate.trim().toLowerCase();
+  const t = target.trim().toLowerCase();
+  if (!c || !t) return false;
+  if (c === t) return true;
+  if (`${c}s` === t || `${c}es` === t) return true;
+  if (c === `${t}s` || c === `${t}es`) return true;
+  return false;
 }
 
 export class MealieApiError extends Error {
@@ -189,26 +380,21 @@ export class MealieApi {
       if (textToParse) {
         const parsedIng = await this.parseIngredient(textToParse);
 
+        // Resolve-or-create: look up existing unit/food by name (incl. simple
+        // plural variants) before creating. Prevents dup records from
+        // accumulating across recipes.
         let unit = parsedIng.unit;
         if (unit && !unit.id && unit.name) {
-          try {
-            const created = await this.createUnit(unit.name);
-            unit = { ...unit, id: created.id };
-          } catch {
-            unit = null;
-          }
+          const resolved = await this.resolveOrCreateUnit(unit.name);
+          unit = resolved ? { ...unit, id: resolved.id, name: resolved.name } : null;
         }
 
         let food = parsedIng.food;
         if (food && !food.id && food.name) {
-          try {
-            const created = await this.createFood(food.name);
-            if (created.id) {
-              food = { ...food, id: created.id };
-            }
-          } catch {
-            food = null;
-          }
+          const resolved = await this.resolveOrCreateFood(food.name);
+          food = resolved?.id
+            ? { ...food, id: resolved.id, name: resolved.name }
+            : null;
         }
 
         parsed.push({
@@ -362,6 +548,18 @@ export class MealieApi {
 
   // ============ Units ============
 
+  async listUnits(
+    page = 1,
+    perPage = 100,
+    search?: string,
+  ): Promise<{ items: Array<{ id: string; name: string; pluralName?: string | null }> }> {
+    const searchParam = search ? `&search=${encodeURIComponent(search)}` : '';
+    const data = await this.request<{
+      items: Array<{ id: string; name: string; pluralName?: string | null }>;
+    }>(`/api/units?page=${page}&perPage=${perPage}${searchParam}`);
+    return data;
+  }
+
   async createUnit(name: string): Promise<{ id: string; name: string }> {
     const data = await this.request<{ id: string; name: string }>(
       '/api/units',
@@ -371,6 +569,24 @@ export class MealieApi {
       },
     );
     return data;
+  }
+
+  async resolveOrCreateUnit(
+    name: string,
+  ): Promise<{ id: string; name: string } | null> {
+    const trimmed = name.trim();
+    if (!trimmed) return null;
+    try {
+      const page = await this.listUnits(1, 50, trimmed);
+      const match = page.items.find((u) =>
+        matchesNameVariant(u.name, trimmed) ||
+        (u.pluralName ? matchesNameVariant(u.pluralName, trimmed) : false),
+      );
+      if (match) return { id: match.id, name: match.name };
+      return await this.createUnit(trimmed);
+    } catch {
+      return null;
+    }
   }
 
   // ============ Foods ============
@@ -401,6 +617,22 @@ export class MealieApi {
       }),
     });
     return ingredientFoodSchema.parse(data);
+  }
+
+  async resolveOrCreateFood(name: string): Promise<IngredientFood | null> {
+    const trimmed = name.trim();
+    if (!trimmed) return null;
+    try {
+      const page = await this.listFoods(1, 50, trimmed);
+      const match = page.items.find((f) =>
+        matchesNameVariant(f.name, trimmed) ||
+        (f.pluralName ? matchesNameVariant(f.pluralName, trimmed) : false),
+      );
+      if (match) return match;
+      return await this.createFood(trimmed);
+    } catch {
+      return null;
+    }
   }
 
   // ============ Shopping Lists ============
@@ -495,11 +727,153 @@ export class MealieApi {
   }
 
   async createRecipeFromUrl(url: string, includeTags = false): Promise<string> {
-    const data = await this.request<string>('/api/recipes/create/url', {
+    const tried: string[] = [];
+
+    // 1. Mealie's native scraper — fastest path when it works.
+    try {
+      const slug = await this.request<string>('/api/recipes/create/url', {
+        method: 'POST',
+        body: JSON.stringify({ url, includeTags }),
+      });
+      logInfo('url_import.native_ok', { url });
+      return slug;
+    } catch (err) {
+      if (!(err instanceof MealieApiError) || err.statusCode !== 400) {
+        throw err;
+      }
+      tried.push('native');
+      logInfo('url_import.native_failed', { url, status: err.statusCode });
+    }
+
+    // 2. Fetch the page with a realistic browser UA, then let Mealie parse the
+    //    HTML. Defeats scraper-UA blocks (AllRecipes, etc.).
+    const directHtml = await fetchPageAsBrowser(url);
+    if (directHtml) {
+      try {
+        const slug = await this.createRecipeFromHtml(url, directHtml, includeTags);
+        logInfo('url_import.direct_html_ok', { url, bytes: directHtml.length });
+        return slug;
+      } catch (err) {
+        tried.push('direct+mealie_html');
+        logInfo('url_import.direct_html_rejected', {
+          url,
+          bytes: directHtml.length,
+          err: err instanceof Error ? err.message : 'unknown',
+        });
+      }
+
+      // 2b. If Mealie's scraper still refused (site not in recipe_scrapers
+      //     whitelist), extract schema.org JSON-LD ourselves.
+      const extracted = extractRecipeFromJsonLd(directHtml);
+      if (extracted) {
+        try {
+          const slug = await this.createRecipeFromExtracted(extracted, url);
+          logInfo('url_import.json_ld_ok', {
+            url,
+            ingredients: extracted.ingredients.length,
+          });
+          return slug;
+        } catch (err) {
+          tried.push('direct+json_ld');
+          logError('url_import.json_ld_failed', {
+            url,
+            err: err instanceof Error ? err.message : 'unknown',
+          });
+        }
+      } else {
+        tried.push('direct+no_json_ld');
+      }
+    } else {
+      tried.push('direct_blocked');
+    }
+
+    // 3. Last resort: Wayback Machine. Same cascade on the archived HTML.
+    const waybackHtml = await fetchFromWayback(url);
+    if (waybackHtml) {
+      try {
+        const slug = await this.createRecipeFromHtml(url, waybackHtml, includeTags);
+        logInfo('url_import.wayback_html_ok', { url, bytes: waybackHtml.length });
+        return slug;
+      } catch {
+        tried.push('wayback+mealie_html');
+      }
+      const extracted = extractRecipeFromJsonLd(waybackHtml);
+      if (extracted) {
+        try {
+          const slug = await this.createRecipeFromExtracted(extracted, url);
+          logInfo('url_import.wayback_json_ld_ok', { url });
+          return slug;
+        } catch {
+          tried.push('wayback+json_ld');
+        }
+      }
+    } else {
+      tried.push('wayback_unavailable');
+    }
+
+    logError('url_import.all_failed', { url, tried: tried.join(',') });
+    throw new MealieApiError(
+      `Could not import recipe from URL — all strategies failed: ${tried.join(', ')}`,
+      400,
+      { url, tried },
+    );
+  }
+
+  private async createRecipeFromHtml(
+    url: string,
+    html: string,
+    includeTags: boolean,
+  ): Promise<string> {
+    return this.request<string>('/api/recipes/create/html-or-json', {
       method: 'POST',
-      body: JSON.stringify({ url, includeTags }),
+      body: JSON.stringify({
+        data: html,
+        url,
+        includeTags,
+        includeCategories: false,
+      }),
     });
-    return data; // Returns the slug of the created recipe
+  }
+
+  // Create a recipe from our own JSON-LD extraction. Uses the standard
+  // create_recipe flow so originalText strings get parsed + deduped.
+  private async createRecipeFromExtracted(
+    extracted: ExtractedRecipe,
+    sourceUrl: string,
+  ): Promise<string> {
+    const slug = await this.createRecipe({
+      name: extracted.name,
+      description: extracted.description,
+      recipeYield: extracted.recipeYield,
+      totalTime: extracted.totalTime,
+      prepTime: extracted.prepTime,
+      cookTime: extracted.cookTime,
+      recipeIngredient: extracted.ingredients.map((text) => ({ originalText: text })),
+      recipeInstructions: extracted.instructions.map((text) => ({ text })),
+    });
+
+    // Best-effort image download + upload. Don't fail the whole import if
+    // image fetch fails.
+    if (extracted.imageUrl) {
+      try {
+        const imgRes = await fetchWithTimeout(extracted.imageUrl, {
+          headers: BROWSER_ACCEPT_HEADERS,
+        });
+        if (imgRes.ok) {
+          const buf = Buffer.from(await imgRes.arrayBuffer());
+          const base64 = buf.toString('base64');
+          const ext = (extracted.imageUrl.match(/\.(jpg|jpeg|png|webp|gif)(\?|$)/i)?.[1] ?? 'jpg').toLowerCase();
+          await this.uploadRecipeImage(slug, base64, `image.${ext}`);
+        }
+      } catch (err) {
+        logInfo('url_import.image_upload_failed', {
+          url: sourceUrl,
+          err: err instanceof Error ? err.message : 'unknown',
+        });
+      }
+    }
+
+    return slug;
   }
 
   // ============ Meal Plans ============
