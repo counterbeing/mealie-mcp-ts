@@ -1,0 +1,225 @@
+#!/usr/bin/env bash
+# Iteration toolkit for mealie-mcp-ts. Run `./dev` with no args for help.
+set -euo pipefail
+
+# ── Config ──────────────────────────────────────────────────────────────
+NAS_HOST="${NAS_HOST:-nas}"
+NAS_PROJECT_DIR="${NAS_PROJECT_DIR:-/volume1/docker/mealie}"
+MCP_URL="${MCP_URL:-http://10.9.8.50:3000/mcp}"
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# ── Helpers ─────────────────────────────────────────────────────────────
+nas_sh() {
+  # Wrap a command so it finds docker on Synology's non-login SSH PATH.
+  ssh "$NAS_HOST" "PATH=/usr/local/bin:\$PATH; cd $NAS_PROJECT_DIR; $*"
+}
+
+mcp_call() {
+  # mcp_call <tool-name> <json-args>
+  local tool="$1"
+  local args="$2"
+  local body
+  body=$(cat <<EOF
+{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"$tool","arguments":$args}}
+EOF
+)
+  curl -s -X POST "$MCP_URL" \
+    -H 'Content-Type: application/json' \
+    -H 'Accept: application/json, text/event-stream' \
+    -d "$body" | sed -n 's/^data: //p'
+}
+
+mcp_pretty() {
+  # Pretty-print the tool response (unwrap result.content[0].text, reparse)
+  node -e '
+    const d = require("fs").readFileSync(0, "utf8");
+    if (!d.trim()) { console.log("(empty response)"); process.exit(0); }
+    const r = JSON.parse(d);
+    const text = r.result?.content?.[0]?.text;
+    if (!text) { console.log(JSON.stringify(r, null, 2)); process.exit(0); }
+    try { console.log(JSON.stringify(JSON.parse(text), null, 2)); }
+    catch { console.log(text); }
+  '
+}
+
+hdr() { printf "\033[1;36m── %s ──\033[0m\n" "$*"; }
+
+# ── NAS commands ────────────────────────────────────────────────────────
+cmd_nas_status() {
+  hdr "NAS compose status"
+  nas_sh 'docker compose ps'
+}
+
+cmd_nas_pull() {
+  hdr "Pulling latest mealie-mcp image"
+  nas_sh 'docker compose pull --quiet mealie-mcp'
+}
+
+cmd_nas_up() {
+  # --force-recreate is required because our compose uses :latest (tag is stable,
+  # so plain `up -d` skips recreation even after a pull)
+  hdr "Recreating mealie-mcp container"
+  nas_sh 'docker compose up -d --force-recreate mealie-mcp'
+}
+
+cmd_nas_redeploy() {
+  cmd_nas_pull
+  cmd_nas_up
+  hdr "Confirming new version"
+  nas_sh 'docker inspect mealie-mcp --format "image={{.Config.Image}}  hash={{.Image}}"'
+}
+
+cmd_nas_logs() {
+  # ./dev nas:logs [-f] [--tail=N]
+  local args=("$@")
+  if [[ ${#args[@]} -eq 0 ]]; then
+    args=(--tail=50)
+  fi
+  nas_sh "docker logs ${args[*]} mealie-mcp"
+}
+
+cmd_nas_restart() {
+  hdr "Restarting mealie-mcp"
+  nas_sh 'docker compose restart mealie-mcp'
+}
+
+cmd_nas_shell() {
+  ssh -t "$NAS_HOST" "cd $NAS_PROJECT_DIR && PATH=/usr/local/bin:\$PATH exec bash"
+}
+
+# ── MCP commands ────────────────────────────────────────────────────────
+cmd_mcp_call() {
+  local tool="${1:?usage: ./dev mcp:call <tool> <json-args>}"
+  local args="${2:-{\}}"
+  mcp_call "$tool" "$args" | mcp_pretty
+}
+
+cmd_mcp_list() {
+  hdr "MCP tool list"
+  curl -s -X POST "$MCP_URL" \
+    -H 'Content-Type: application/json' \
+    -H 'Accept: application/json, text/event-stream' \
+    -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' \
+    | sed -n 's/^data: //p' \
+    | node -e '
+      const d = require("fs").readFileSync(0, "utf8");
+      const r = JSON.parse(d);
+      for (const t of r.result.tools) console.log(t.name);
+    '
+}
+
+cmd_mcp_get() {
+  local slug="${1:?usage: ./dev mcp:get <slug>}"
+  mcp_call get_recipe "{\"slug\":\"$slug\"}" | mcp_pretty
+}
+
+cmd_mcp_delete() {
+  local slug="${1:?usage: ./dev mcp:delete <slug>}"
+  mcp_call delete_recipe "{\"slug\":\"$slug\"}" | mcp_pretty
+}
+
+cmd_mcp_ping() {
+  hdr "MCP ping (get_current_user)"
+  mcp_call get_current_user '{}' | mcp_pretty
+}
+
+# ── Hermes commands ─────────────────────────────────────────────────────
+cmd_ask() {
+  local prompt="${1:?usage: ./dev ask \"<prompt>\"}"
+  hermes chat -q "$prompt" -Q
+}
+
+# ── Release ─────────────────────────────────────────────────────────────
+cmd_release() {
+  local version="${1:?usage: ./dev release <x.y.z>   (no leading v)}"
+  cd "$REPO_DIR"
+  hdr "Testing"
+  pnpm test
+  hdr "Building"
+  pnpm run build
+  hdr "Bumping package.json to $version"
+  node -e "const p=require('./package.json');p.version='$version';require('fs').writeFileSync('./package.json', JSON.stringify(p,null,2)+'\n')"
+  git add package.json
+  if ! git diff --cached --quiet; then
+    git commit -m "Bump version to $version"
+  fi
+  hdr "Tagging v$version and pushing"
+  git push origin master
+  git tag "v$version"
+  git push origin "v$version"
+  hdr "Waiting for CI"
+  sleep 4
+  local run_id
+  run_id=$(gh run list --workflow=docker-publish.yml --limit 1 --json databaseId --jq '.[0].databaseId')
+  gh run watch "$run_id" --exit-status
+  hdr "Redeploying NAS"
+  cmd_nas_redeploy
+}
+
+# ── Full iteration cycle ────────────────────────────────────────────────
+cmd_cycle() {
+  # ./dev cycle <slug> "<prompt>"
+  # Delete a recipe, ask Hermes to recreate it, then show the result.
+  local slug="${1:?usage: ./dev cycle <slug> \"<prompt>\"}"
+  local prompt="${2:?usage: ./dev cycle <slug> \"<prompt>\"}"
+  hdr "Deleting '$slug' so we start clean"
+  mcp_call delete_recipe "{\"slug\":\"$slug\"}" | mcp_pretty || true
+  hdr "Asking Hermes"
+  echo "  > $prompt"
+  hermes chat -q "$prompt" -Q
+  hdr "Checking recipe"
+  cmd_mcp_get "$slug" || true
+}
+
+# ── Help ────────────────────────────────────────────────────────────────
+usage() {
+  cat <<'EOF'
+mealie-mcp dev toolkit — iterate fast.
+
+NAS (via SSH):
+  ./dev nas:status                 # docker compose ps
+  ./dev nas:pull                   # pull latest mealie-mcp image
+  ./dev nas:up                     # recreate mealie-mcp container
+  ./dev nas:redeploy               # pull + up, print running image
+  ./dev nas:logs [-f] [--tail=N]   # stream MCP logs (default --tail=50)
+  ./dev nas:restart                # restart mealie-mcp
+  ./dev nas:shell                  # interactive SSH in the project dir
+
+MCP (curl):
+  ./dev mcp:ping                   # get_current_user round-trip
+  ./dev mcp:list                   # list all 25 tools
+  ./dev mcp:get <slug>             # fetch a recipe
+  ./dev mcp:delete <slug>          # delete a recipe
+  ./dev mcp:call <tool> <json>     # low-level tool call
+
+Hermes:
+  ./dev ask "<prompt>"             # one-shot hermes chat -q <> -Q
+
+Release / cycle:
+  ./dev release 1.0.3              # test, build, bump, tag, push, CI, redeploy
+  ./dev cycle <slug> "<prompt>"    # delete + ask + verify
+
+Env overrides: NAS_HOST (default: nas), NAS_PROJECT_DIR, MCP_URL
+EOF
+}
+
+# ── Dispatch ────────────────────────────────────────────────────────────
+case "${1:-help}" in
+  nas:status)    shift; cmd_nas_status "$@" ;;
+  nas:pull)      shift; cmd_nas_pull "$@" ;;
+  nas:up)        shift; cmd_nas_up "$@" ;;
+  nas:redeploy)  shift; cmd_nas_redeploy "$@" ;;
+  nas:logs)      shift; cmd_nas_logs "$@" ;;
+  nas:restart)   shift; cmd_nas_restart "$@" ;;
+  nas:shell)     shift; cmd_nas_shell "$@" ;;
+  mcp:ping)      shift; cmd_mcp_ping "$@" ;;
+  mcp:list)      shift; cmd_mcp_list "$@" ;;
+  mcp:get)       shift; cmd_mcp_get "$@" ;;
+  mcp:delete)    shift; cmd_mcp_delete "$@" ;;
+  mcp:call)      shift; cmd_mcp_call "$@" ;;
+  ask)           shift; cmd_ask "$@" ;;
+  release)       shift; cmd_release "$@" ;;
+  cycle)         shift; cmd_cycle "$@" ;;
+  help|-h|--help) usage ;;
+  *) echo "unknown command: $1"; echo; usage; exit 1 ;;
+esac

@@ -34,6 +34,8 @@ const ALL_TOOLS = [
   'delete_meal_plan',
   // User/debug tools
   'get_current_user',
+  // Ingredient parsing tools
+  'parse_recipe_ingredients',
 ] as const;
 
 export type ToolName = (typeof ALL_TOOLS)[number];

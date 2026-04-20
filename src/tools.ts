@@ -769,6 +769,59 @@ export const getCurrentUserTool: ToolDefinition = {
   },
 };
 
+// Parse Recipe Ingredients Tool
+const parseRecipeIngredientsSchema = z.object({
+  slug: z
+    .string()
+    .describe('Recipe slug whose ingredients should be parsed and structured'),
+});
+
+export const parseRecipeIngredientsTool: ToolDefinition = {
+  name: 'parse_recipe_ingredients',
+  description:
+    'Re-parse all ingredients for an existing recipe so each has proper quantity, unit, and food fields instead of free-text notes. ' +
+    'Fetches the recipe, sends each ingredient note through the Mealie ingredient parser, creates any missing unit/food records, ' +
+    'and saves the structured ingredients back to the recipe. ' +
+    'Use this after importing a recipe from a URL whose ingredients came in as plain text.',
+  inputSchema: parseRecipeIngredientsSchema,
+  handler: async (api, input) => {
+    const { slug } = parseRecipeIngredientsSchema.parse(input);
+
+    // Fetch the current recipe
+    const recipe = await api.getRecipe(slug);
+
+    // Convert each ingredient's display text into an originalText entry so
+    // parseIngredients() runs them through the /api/parser/ingredient endpoint.
+    const asOriginalText = recipe.recipeIngredient.map((ing) => {
+      const text = (ing as { display?: string; note?: string }).display
+        || (ing as { note?: string }).note
+        || '';
+      return { originalText: text };
+    });
+
+    // parseIngredients resolves/creates missing unit+food IDs automatically
+    const parsed = await api.parseIngredients(asOriginalText);
+
+    // Write back using the low-level update path
+    const updated = await api.updateRecipe({
+      slug,
+      recipeIngredient: parsed as Parameters<typeof api.updateRecipe>[0]['recipeIngredient'],
+    });
+
+    return {
+      success: true,
+      slug: updated.slug,
+      ingredientCount: updated.recipeIngredient.length,
+      message: `Parsed and structured ${updated.recipeIngredient.length} ingredients for "${updated.name}"`,
+      ingredients: updated.recipeIngredient.map((ing) => ({
+        quantity: (ing as { quantity?: number }).quantity,
+        unit: (ing as { unit?: { name?: string } }).unit?.name ?? null,
+        food: (ing as { food?: { name?: string } }).food?.name ?? null,
+        note: (ing as { note?: string }).note ?? '',
+      })),
+    };
+  },
+};
 // Export all tools
 export const allTools: ToolDefinition[] = [
   // Recipe tools
@@ -804,6 +857,8 @@ export const allTools: ToolDefinition[] = [
   deleteMealPlanTool,
   // User/debug tools
   getCurrentUserTool,
+  // Ingredient parsing tools
+  parseRecipeIngredientsTool,
 ];
 
 export function getToolByName(name: string): ToolDefinition | undefined {
