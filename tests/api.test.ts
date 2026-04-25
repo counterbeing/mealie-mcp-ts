@@ -93,7 +93,7 @@ describe('parseIngredients', () => {
     expect(result[0].food?.id).toBe(FOOD_ID);
   });
 
-  it('attaches a section title from a standalone header entry to the next ingredient', async () => {
+  it('preserves standalone section headers as separate ingredient rows', async () => {
     vi.spyOn(api, 'parseIngredient').mockResolvedValue({
       quantity: 1,
       unit: { id: UNIT_ID, name: 'cup' },
@@ -109,8 +109,9 @@ describe('parseIngredients', () => {
       { originalText: '1 cup flour' },
     ])) as Array<{ title: string }>;
 
-    expect(result).toHaveLength(1);
+    expect(result).toHaveLength(2);
     expect(result[0].title).toBe('Dry Ingredients');
+    expect(result[1].title).toBe('');
   });
 
   it('passes note-only ingredients through without calling the parser', async () => {

@@ -351,13 +351,27 @@ export class MealieApi {
     if (!ingredients) return [];
 
     const parsed: unknown[] = [];
-    let pendingTitle: string | null = null;
 
     for (const ing of ingredients) {
-      // Section header: title only, no ingredient data
-      if (ing.title && !ing.originalText && !ing.food && !ing.quantity) {
-        pendingTitle = ing.title;
+      const sectionTitle = ing.title?.trim() || '';
+      const hasIngredientData =
+        Boolean(ing.originalText) ||
+        Boolean(ing.food) ||
+        Boolean(ing.unit) ||
+        ing.quantity != null ||
+        Boolean(ing.note);
+
+      // Preserve recipe section headers as standalone title-only rows so Mealie
+      // can render and round-trip the grouping correctly.
+      if (sectionTitle && !hasIngredientData) {
+        parsed.push({ title: sectionTitle });
         continue;
+      }
+
+      // If an ingredient row also carries a section title, emit the header row
+      // first and keep the ingredient itself title-free.
+      if (sectionTitle) {
+        parsed.push({ title: sectionTitle });
       }
 
       // Normalize structured-with-name-only ingredients into originalText so
@@ -402,13 +416,11 @@ export class MealieApi {
           unit: unit?.id ? unit : null,
           food: food?.id ? food : null,
           note: parsedIng.note || '',
-          title: pendingTitle || '',
+          title: '',
         });
-        pendingTitle = null;
       } else {
         // Note-only or otherwise trivially-structured ingredient — pass through
-        parsed.push(pendingTitle ? { ...ing, title: pendingTitle } : ing);
-        pendingTitle = null;
+        parsed.push({ ...ing, title: '' });
       }
     }
     return parsed;
