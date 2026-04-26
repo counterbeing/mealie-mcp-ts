@@ -6,28 +6,54 @@ MCP server for Mealie. Supports both stdio (local Claude Desktop) and Streamable
 
 Runs in a container on the user's Synology NAS alongside Mealie, on the `mealie_net` external Docker network. Claude Desktop on the Mac connects via `http://<nas>:3000/mcp`.
 
-## Cutting a release
+## Shipping changes to the NAS
 
-Images are published to Docker Hub automatically by `.github/workflows/docker-publish.yml` on tag push.
+Use the `./dev` script — it bundles test/build/version-bump/tag/CI-watch/redeploy into one command:
 
 ```bash
-# Bump version in package.json if appropriate, then:
-git tag v1.2.3
-git push origin v1.2.3
+./dev release 1.2.3       # no leading 'v'
 ```
 
-Produces these tags on Docker Hub (note: metadata-action strips the `v` prefix):
-- `<user>/mealie-mcp:1.2.3` (exact)
-- `<user>/mealie-mcp:1.2` (minor-floating)
-- `<user>/mealie-mcp:latest`
+What it does (in order):
+1. `pnpm test` and `pnpm run build` — fail fast if anything is broken
+2. Bumps `package.json` version
+3. **`git add -u`** to stage all tracked changes (src, tests, docs) + `package.json`. This is critical — without it the tagged image won't contain in-flight source changes (this footgun bit us in v1.0.4..v1.0.6, which were empty bumps).
+4. Commits "Release v1.2.3" if anything is staged
+5. Pushes master, creates `v1.2.3` tag, pushes the tag
+6. Watches the `docker-publish.yml` workflow run via `gh run watch`
+7. Calls `cmd_nas_redeploy` → `docker compose pull` + `docker compose up -d --force-recreate mealie-mcp` over SSH (note: `--force-recreate` is required because compose pins `:latest`, so plain `up -d` skips recreation even after a pull)
 
-The workflow requires two repo settings on GitHub (already configured):
+Pushing to master and tagging are flagged as risky by the safety policy — the user must explicitly authorize each `git push` step. Don't try to bypass.
+
+### Faster iteration without a release
+
+For NAS-only redeploys (e.g. re-pulling latest after a workflow re-run):
+```bash
+./dev nas:redeploy        # pull + force-recreate, prints running image hash
+./dev nas:logs -f         # tail container logs
+./dev nas:restart         # restart in place (no image change)
+```
+
+For verifying the live MCP:
+```bash
+./dev mcp:ping            # get_current_user round-trip
+./dev mcp:list            # tools/list
+./dev mcp:get <slug>      # fetch a recipe
+./dev mcp:call <tool> '<json>'
+```
+
+### Image tags
+
+Docker Hub publishes (metadata-action strips the `v`):
+- `corylogan/mealie-mcp:1.2.3` (exact)
+- `corylogan/mealie-mcp:1.2` (minor-floating)
+- `corylogan/mealie-mcp:latest` (compose pulls this)
+
+GitHub repo settings the workflow needs (already configured):
 - Variable `DOCKERHUB_USERNAME`
-- Secret `DOCKERHUB_TOKEN` (Docker Hub personal access token with read+write)
+- Secret `DOCKERHUB_TOKEN` (Docker Hub PAT, read+write)
 
-To re-run a failed release without a new tag: Actions tab → pick the run → **Re-run jobs**. Or trigger manually via `workflow_dispatch` (the workflow has it enabled).
-
-To update a running NAS deployment after publishing: Container Manager → Project → **Pull + Apply**.
+Re-run a failed publish without a new tag: Actions tab → run → **Re-run jobs**, or trigger via `workflow_dispatch`. The Container Manager UI also exposes Project → **Pull + Apply** as a fallback path, but `./dev nas:redeploy` is faster.
 
 ## Local development
 

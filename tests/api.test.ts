@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { MealieApi } from '../src/api.js';
+import { extractSectionTitleFromText, MealieApi } from '../src/api.js';
 
 const UNIT_ID = '11111111-1111-4111-8111-111111111111';
 const FOOD_ID = '22222222-2222-4222-8222-222222222222';
@@ -93,6 +93,62 @@ describe('parseIngredients', () => {
     expect(result[0].food?.id).toBe(FOOD_ID);
   });
 
+  it('infers section header from originalText alone (e.g. "For the sauce")', async () => {
+    const parseSpy = vi.spyOn(api, 'parseIngredient');
+
+    const result = (await api.parseIngredients([
+      { originalText: 'For the roast pork' },
+      { originalText: 'For the garlic mayonnaise' },
+      { originalText: 'For the sandwiches' },
+    ])) as Array<{ title: string }>;
+
+    expect(parseSpy).not.toHaveBeenCalled();
+    expect(result).toHaveLength(3);
+    expect(result[0]).toEqual({ title: 'For the roast pork' });
+    expect(result[1]).toEqual({ title: 'For the garlic mayonnaise' });
+    expect(result[2]).toEqual({ title: 'For the sandwiches' });
+  });
+
+  it('infers section headers mixed with real ingredients', async () => {
+    vi.spyOn(api, 'parseIngredient').mockResolvedValue({
+      quantity: 1,
+      unit: { id: UNIT_ID, name: 'cup' },
+      food: { id: FOOD_ID, name: 'flour' },
+      note: '',
+      display: '1 cup flour',
+      originalText: '1 cup flour',
+      referenceId: 'r1',
+    } as never);
+
+    const result = (await api.parseIngredients([
+      { originalText: 'For the dough:' },
+      { originalText: '1 cup flour' },
+    ])) as Array<{ title: string }>;
+
+    expect(result).toHaveLength(2);
+    expect(result[0]).toEqual({ title: 'For the dough' });
+    expect(result[1].title).toBe('');
+  });
+
+  it('does not treat quantity-bearing originalText as a section header', async () => {
+    vi.spyOn(api, 'parseIngredient').mockResolvedValue({
+      quantity: 2,
+      unit: { id: UNIT_ID, name: 'cup' },
+      food: { id: FOOD_ID, name: 'flour' },
+      note: '',
+      display: '2 cups flour',
+      originalText: '2 cups flour for the dough',
+      referenceId: 'r1',
+    } as never);
+
+    const result = (await api.parseIngredients([
+      { originalText: '2 cups flour for the dough' },
+    ])) as Array<{ title: string }>;
+
+    expect(result).toHaveLength(1);
+    expect(result[0].title).toBe('');
+  });
+
   it('preserves standalone section headers as separate ingredient rows', async () => {
     vi.spyOn(api, 'parseIngredient').mockResolvedValue({
       quantity: 1,
@@ -123,6 +179,26 @@ describe('parseIngredients', () => {
 
     expect(parseSpy).not.toHaveBeenCalled();
     expect(result[0].note).toBe('Salt to taste');
+  });
+
+  it('extractSectionTitleFromText recognizes common header shapes', () => {
+    expect(extractSectionTitleFromText('For the sauce')).toBe('For the sauce');
+    expect(extractSectionTitleFromText('For the roast pork:')).toBe(
+      'For the roast pork',
+    );
+    expect(extractSectionTitleFromText('## Topping')).toBe('Topping');
+    expect(extractSectionTitleFromText('### Topping:')).toBe('Topping');
+    expect(extractSectionTitleFromText('Dry Ingredients:')).toBe(
+      'Dry Ingredients',
+    );
+    // Conservative: don't fire on quantity-bearing strings
+    expect(extractSectionTitleFromText('1 cup flour')).toBeNull();
+    expect(extractSectionTitleFromText('2 cups flour for the dough')).toBeNull();
+    // Conservative: bare phrases without explicit signal are not headers
+    expect(extractSectionTitleFromText('Dry Ingredients')).toBeNull();
+    expect(extractSectionTitleFromText('')).toBeNull();
+    expect(extractSectionTitleFromText(null)).toBeNull();
+    expect(extractSectionTitleFromText(undefined)).toBeNull();
   });
 
   it('nulls out unit when resolver returns null', async () => {

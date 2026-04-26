@@ -378,12 +378,14 @@ export const createRecipeInputSchema = z.object({
         title: z
           .string()
           .optional()
-          .describe('Section title for ingredient grouping'),
+          .describe(
+            'Section header for ingredient grouping (e.g. "For the sauce"). To start a new section, insert a standalone entry like {"title": "For the sauce"} before that section\'s ingredients — no other fields required. The header attaches to the next ingredient and renders as a section break in Mealie.',
+          ),
       }),
     )
     .optional()
     .describe(
-      'List of ingredients. Each ingredient can either have originalText (to be parsed automatically) or structured fields (quantity, unit, food, note).',
+      'List of ingredients. Each ingredient can either have originalText (to be parsed automatically) or structured fields (quantity, unit, food, note). To group ingredients into sections like "For the sauce", insert standalone {"title": "For the sauce"} entries between groups — Mealie will render them as section headers.',
     ),
   recipeInstructions: z
     .array(

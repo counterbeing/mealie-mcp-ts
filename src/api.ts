@@ -243,6 +243,39 @@ async function fetchFromWayback(url: string): Promise<string | null> {
   }
 }
 
+// Detect ingredient rows that are actually section headers in disguise.
+// AI clients commonly send headers as `originalText: "For the sauce"` instead
+// of the `{title: "..."}` shape Mealie expects. We recognize a few shapes and
+// hand back the cleaned-up title; the caller emits a title-only row that
+// Mealie attaches to the next ingredient as a section break.
+//
+// Conservative on purpose — only matches strings that clearly aren't real
+// ingredients. We never want to swallow a quantity-bearing line.
+export function extractSectionTitleFromText(
+  text: string | null | undefined,
+): string | null {
+  if (!text) return null;
+  const t = text.trim();
+  if (!t || t.length > 80) return null;
+  if (/\d/.test(t)) return null;
+
+  // Markdown header: "## Sauce", "### Topping"
+  const md = t.match(/^#{1,4}\s+(.+?)\s*:?$/);
+  if (md) return md[1].trim();
+
+  // Strip trailing punctuation for the remaining checks
+  const stripped = t.replace(/[:.]\s*$/, '').trim();
+  if (!stripped) return null;
+
+  // "For the X" / "For X" — common AI-generated section delimiter
+  if (/^for(?:\s+the)?\s+\S/i.test(stripped)) return stripped;
+
+  // Trailing colon (e.g. "Dry Ingredients:") — caller signaled it explicitly
+  if (/:\s*$/.test(t)) return stripped;
+
+  return null;
+}
+
 // Case-insensitive match that also tolerates simple English plural differences:
 // exact match, candidate+s, candidate+es, target+s, target+es. Intentionally
 // conservative — we'd rather miss a dedupe than falsely merge "glass" with "gla".
@@ -353,25 +386,33 @@ export class MealieApi {
     const parsed: unknown[] = [];
 
     for (const ing of ingredients) {
-      const sectionTitle = ing.title?.trim() || '';
-      const hasIngredientData =
-        Boolean(ing.originalText) ||
+      const explicitTitle = ing.title?.trim() || '';
+      const hasStructured =
         Boolean(ing.food) ||
         Boolean(ing.unit) ||
         ing.quantity != null ||
         Boolean(ing.note);
 
-      // Preserve recipe section headers as standalone title-only rows so Mealie
-      // can render and round-trip the grouping correctly.
-      if (sectionTitle && !hasIngredientData) {
-        parsed.push({ title: sectionTitle });
-        continue;
-      }
+      // If the caller didn't pass any structured fields and didn't set `title`,
+      // sniff a section header out of originalText (e.g. "For the sauce"). Lets
+      // AI clients send a flat ingredient list and still get sectioned output.
+      const inferredTitle =
+        !explicitTitle && !hasStructured
+          ? extractSectionTitleFromText(ing.originalText)
+          : null;
+      const sectionTitle = explicitTitle || inferredTitle || '';
 
-      // If an ingredient row also carries a section title, emit the header row
-      // first and keep the ingredient itself title-free.
+      // True iff there's still an ingredient to emit *after* the optional
+      // section row. When inferredTitle fired, originalText *was* the header,
+      // so there's nothing more to parse.
+      const hasIngredientToEmit =
+        hasStructured || (Boolean(ing.originalText) && !inferredTitle);
+
       if (sectionTitle) {
         parsed.push({ title: sectionTitle });
+      }
+      if (!hasIngredientToEmit) {
+        continue;
       }
 
       // Normalize structured-with-name-only ingredients into originalText so
