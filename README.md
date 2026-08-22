@@ -1,3 +1,5 @@
+
+
 # Mealie MCP Server
 
 An MCP (Model Context Protocol) server that enables LLMs to interact with [Mealie](https://mealie.io) - a self-hosted recipe manager and meal planner.
@@ -14,6 +16,8 @@ An MCP (Model Context Protocol) server that enables LLMs to interact with [Meali
 - **Food Management**: List and create food items
 
 ## Installation
+
+Requires Node.js 22 or newer.
 
 ```bash
 # Clone the repository
