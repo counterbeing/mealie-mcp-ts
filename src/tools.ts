@@ -83,6 +83,8 @@ export const getRecipeTool: ToolDefinition = {
       slug: recipe.slug,
       description: recipe.description,
       recipeYield: recipe.recipeYield,
+      recipeServings: recipe.recipeServings,
+      nutrition: recipe.nutrition ?? null,
       totalTime: recipe.totalTime,
       prepTime: recipe.prepTime,
       cookTime: recipe.cookTime,
