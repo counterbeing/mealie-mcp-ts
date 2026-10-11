@@ -19,6 +19,7 @@ import {
   type MealPlanPagination,
   mealPlanEntrySchema,
   mealPlanPaginationSchema,
+  normalizeNutrition,
   type Recipe,
   type RecipePagination,
   recipePaginationSchema,
@@ -501,7 +502,9 @@ export class MealieApi {
       input.prepTime ||
       input.cookTime ||
       input.recipeIngredient ||
-      input.recipeInstructions
+      input.recipeInstructions ||
+      input.recipeServings !== undefined ||
+      input.nutrition !== undefined
     ) {
       await this.updateRecipe({
         ...input,
@@ -513,16 +516,20 @@ export class MealieApi {
   }
 
   async updateRecipe(input: UpdateRecipeInput): Promise<Recipe> {
-    // First get the current recipe to merge with updates
-    const current = await this.getRecipe(input.slug);
+    // Merge against the RAW payload, not the zod-parsed Recipe: parsing strips
+    // fields we don't model (settings, extras, tools...), and PUTting the
+    // stripped object back would silently erase them.
+    const current = await this.request<Record<string, unknown>>(
+      `/api/recipes/${input.slug}`,
+    );
 
     // Parse ingredients if provided (handles originalText automatically)
-    let ingredients: unknown[] = current.recipeIngredient;
+    let ingredients = current.recipeIngredient as unknown[];
     if (input.recipeIngredient) {
       ingredients = await this.parseIngredients(input.recipeIngredient);
     }
 
-    const updateData = {
+    const updateData: Record<string, unknown> = {
       ...current,
       name: input.name ?? current.name,
       description: input.description ?? current.description,
@@ -534,6 +541,22 @@ export class MealieApi {
       recipeInstructions:
         input.recipeInstructions ?? current.recipeInstructions,
     };
+
+    if (input.recipeServings !== undefined) {
+      updateData.recipeServings = input.recipeServings;
+      updateData.recipeYieldQuantity = input.recipeServings;
+    }
+
+    if (input.nutrition !== undefined) {
+      updateData.nutrition = {
+        ...((current.nutrition as Record<string, unknown> | null) ?? {}),
+        ...normalizeNutrition(input.nutrition),
+      };
+      updateData.settings = {
+        ...((current.settings as Record<string, unknown> | null) ?? {}),
+        showNutrition: true,
+      };
+    }
 
     const data = await this.request<unknown>(`/api/recipes/${input.slug}`, {
       method: 'PUT',

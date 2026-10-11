@@ -15,6 +15,80 @@ function makeApi(): MealieApi {
   });
 }
 
+type Payload = Record<string, unknown> & {
+  nutrition?: unknown;
+  settings?: Record<string, unknown>;
+};
+
+describe('updateRecipe nutrition + servings', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function mockFetch(current: Record<string, unknown>) {
+    const calls: Array<{ method: string; body?: Payload }> = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        const method = init?.method ?? 'GET';
+        const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+        calls.push({ method, body });
+        const payload = method === 'PUT' ? body : current;
+        return new Response(JSON.stringify(payload), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }),
+    );
+    return calls;
+  }
+
+  const current = {
+    name: 'Sausage',
+    slug: 'sausage',
+    recipeServings: 24,
+    recipeYieldQuantity: 24,
+    recipeIngredient: [],
+    recipeInstructions: [],
+    nutrition: { calories: '94', sodiumContent: '230' },
+    settings: { public: true, showNutrition: false, locked: false },
+    extras: { keep: 'me' },
+  };
+
+  it('sets servings, merges per-serving nutrition, enables card, keeps unmodeled fields', async () => {
+    const calls = mockFetch(current);
+    await makeApi().updateRecipe({
+      slug: 'sausage',
+      recipeServings: 16,
+      nutrition: { calories: 140, proteinContent: 16, fatContent: null },
+    });
+    const put = calls.find((c) => c.method === 'PUT')?.body as Payload;
+    expect(put.recipeServings).toBe(16);
+    expect(put.recipeYieldQuantity).toBe(16);
+    expect(put.nutrition).toEqual({
+      calories: '140',
+      proteinContent: '16',
+      fatContent: null,
+      sodiumContent: '230',
+    });
+    expect(put.settings).toEqual({
+      public: true,
+      showNutrition: true,
+      locked: false,
+    });
+    expect(put.extras).toEqual({ keep: 'me' });
+  });
+
+  it('leaves nutrition and servings untouched when not provided', async () => {
+    const calls = mockFetch(current);
+    await makeApi().updateRecipe({ slug: 'sausage', name: 'Renamed' });
+    const put = calls.find((c) => c.method === 'PUT')?.body as Payload;
+    expect(put.recipeServings).toBe(24);
+    expect(put.nutrition).toEqual(current.nutrition);
+    expect(put.settings?.showNutrition).toBe(false);
+  });
+});
+
 describe('parseIngredients', () => {
   let api: MealieApi;
 

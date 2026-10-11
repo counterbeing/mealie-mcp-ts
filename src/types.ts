@@ -118,6 +118,10 @@ export const recipeSchema = recipeSummarySchema.extend({
       fiberContent: z.string().nullish(),
       sodiumContent: z.string().nullish(),
       sugarContent: z.string().nullish(),
+      saturatedFatContent: z.string().nullish(),
+      transFatContent: z.string().nullish(),
+      unsaturatedFatContent: z.string().nullish(),
+      cholesterolContent: z.string().nullish(),
     })
     .nullish(),
   notes: z
@@ -339,6 +343,40 @@ export type ShoppingListPagination = z.infer<
 >;
 
 // Input schemas for tool parameters
+const nutrientValue = z
+  .union([z.number().nonnegative(), z.string(), z.null()])
+  .optional();
+
+export const nutritionInputSchema = z
+  .object({
+    calories: nutrientValue.describe('kcal per serving'),
+    proteinContent: nutrientValue.describe('grams per serving'),
+    fatContent: nutrientValue.describe('grams per serving'),
+    saturatedFatContent: nutrientValue.describe('grams per serving'),
+    transFatContent: nutrientValue.describe('grams per serving'),
+    unsaturatedFatContent: nutrientValue.describe('grams per serving'),
+    carbohydrateContent: nutrientValue.describe('grams per serving'),
+    fiberContent: nutrientValue.describe('grams per serving'),
+    sugarContent: nutrientValue.describe('grams per serving'),
+    sodiumContent: nutrientValue.describe('milligrams per serving'),
+    cholesterolContent: nutrientValue.describe('milligrams per serving'),
+  })
+  .strict();
+
+export type NutritionInput = z.infer<typeof nutritionInputSchema>;
+
+/** Mealie stores nutrition values as strings; normalize numbers and keep nulls. */
+export function normalizeNutrition(
+  input: NutritionInput,
+): Record<string, string | null> {
+  const out: Record<string, string | null> = {};
+  for (const [key, value] of Object.entries(input)) {
+    if (value === undefined) continue;
+    out[key] = value === null ? null : String(value);
+  }
+  return out;
+}
+
 export const createRecipeInputSchema = z.object({
   name: z.string().describe('Name of the recipe'),
   description: z.string().optional().describe('Description of the recipe'),
@@ -399,6 +437,18 @@ export const createRecipeInputSchema = z.object({
     )
     .optional()
     .describe('List of instructions'),
+  recipeServings: z
+    .number()
+    .positive()
+    .optional()
+    .describe(
+      'Number of servings the recipe makes (e.g. 16). Drives the "Serves N" scaling control and is the basis for per-serving nutrition.',
+    ),
+  nutrition: nutritionInputSchema
+    .optional()
+    .describe(
+      "Per-serving nutrition shown in Mealie's Nutrition card. Numbers are per ONE serving (recipeServings). Omitted fields are left unchanged; pass null to clear a field. Setting this also enables the card's visibility.",
+    ),
 });
 
 export const updateRecipeInputSchema = createRecipeInputSchema
