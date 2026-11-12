@@ -385,6 +385,11 @@ export class MealieApi {
     if (!ingredients) return [];
 
     const parsed: unknown[] = [];
+    // Mealie renders a section header from the `title` on a *real* ingredient.
+    // A standalone `{title}` row shows up as an empty checkbox under the
+    // header, so header-only input is held here and attached to the next
+    // ingredient that is emitted.
+    let pendingTitle = '';
 
     for (const ing of ingredients) {
       const explicitTitle = ing.title?.trim() || '';
@@ -403,35 +408,42 @@ export class MealieApi {
           : null;
       const sectionTitle = explicitTitle || inferredTitle || '';
 
-      // True iff there's still an ingredient to emit *after* the optional
-      // section row. When inferredTitle fired, originalText *was* the header,
-      // so there's nothing more to parse.
+      // True iff this entry carries an actual ingredient. When inferredTitle
+      // fired, originalText *was* the header, so there's nothing to parse.
       const hasIngredientToEmit =
         hasStructured || (Boolean(ing.originalText) && !inferredTitle);
 
       if (sectionTitle) {
-        parsed.push({ title: sectionTitle });
+        pendingTitle = sectionTitle;
       }
       if (!hasIngredientToEmit) {
         continue;
       }
+      const title = pendingTitle;
+      pendingTitle = '';
 
-      // Normalize structured-with-name-only ingredients into originalText so
-      // the parser path can resolve/create missing unit+food IDs. Without this,
-      // Mealie 500s with ValueError when it sees {name: "flank steak"} refs
-      // that don't map to existing records.
-      let textToParse = ing.originalText;
-      if (!textToParse && (ing.unit?.name || ing.food?.name)) {
-        textToParse = [
-          ing.quantity != null ? String(ing.quantity) : '',
-          ing.unit?.name ?? '',
-          ing.food?.name ?? '',
-          ing.note ?? '',
-        ]
-          .filter((part) => part.trim() !== '')
-          .join(' ')
-          .trim();
+      // Structured input: resolve food and unit directly by name. Re-parsing
+      // a "qty unit food note" string let the parser move note words into
+      // the food name ("enchilada sauce rest of 2") and drop "or X"
+      // alternatives, so only fall back to the parser for originalText.
+      if (!ing.originalText && (ing.unit?.name || ing.food?.name)) {
+        const unit = ing.unit?.name
+          ? await this.resolveOrCreateUnit(ing.unit.name.trim())
+          : null;
+        const food = ing.food?.name
+          ? await this.resolveOrCreateFood(ing.food.name.trim())
+          : null;
+        parsed.push({
+          quantity: ing.quantity ?? 0,
+          unit: unit?.id ? { id: unit.id, name: unit.name } : null,
+          food: food?.id ? { id: food.id, name: food.name } : null,
+          note: ing.note ?? '',
+          title,
+        });
+        continue;
       }
+
+      const textToParse = ing.originalText;
 
       if (textToParse) {
         const parsedIng = await this.parseIngredient(textToParse);
@@ -442,7 +454,9 @@ export class MealieApi {
         let unit = parsedIng.unit;
         if (unit && !unit.id && unit.name) {
           const resolved = await this.resolveOrCreateUnit(unit.name);
-          unit = resolved ? { ...unit, id: resolved.id, name: resolved.name } : null;
+          unit = resolved
+            ? { ...unit, id: resolved.id, name: resolved.name }
+            : null;
         }
 
         let food = parsedIng.food;
@@ -458,11 +472,11 @@ export class MealieApi {
           unit: unit?.id ? unit : null,
           food: food?.id ? food : null,
           note: parsedIng.note || '',
-          title: '',
+          title,
         });
       } else {
         // Note-only or otherwise trivially-structured ingredient — pass through
-        parsed.push({ ...ing, title: '' });
+        parsed.push({ ...ing, title });
       }
     }
     return parsed;

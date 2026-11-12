@@ -131,16 +131,8 @@ describe('parseIngredients', () => {
     expect(result[0].food?.id).toBe(FOOD_ID);
   });
 
-  it('normalizes structured {unit:{name},food:{name}} through the parser', async () => {
-    const parseSpy = vi.spyOn(api, 'parseIngredient').mockResolvedValue({
-      quantity: 1,
-      unit: { id: '', name: 'lb' },
-      food: { id: '', name: 'flank steak' },
-      note: 'thinly sliced',
-      display: '1 lb flank steak thinly sliced',
-      originalText: '1 lb flank steak thinly sliced',
-      referenceId: 'r1',
-    } as never);
+  it('resolves structured {unit:{name},food:{name}} by name without re-parsing', async () => {
+    const parseSpy = vi.spyOn(api, 'parseIngredient');
     vi.spyOn(api, 'resolveOrCreateUnit').mockResolvedValue({
       id: UNIT_ID,
       name: 'pound',
@@ -158,32 +150,58 @@ describe('parseIngredients', () => {
         note: 'thinly sliced',
       },
     ])) as Array<{
+      quantity: number;
       unit: { id: string } | null;
-      food: { id: string } | null;
+      food: { id: string; name: string } | null;
+      note: string;
     }>;
 
-    expect(parseSpy).toHaveBeenCalledWith('1 lb flank steak thinly sliced');
+    expect(parseSpy).not.toHaveBeenCalled();
+    expect(result[0].quantity).toBe(1);
     expect(result[0].unit?.id).toBe(UNIT_ID);
-    expect(result[0].food?.id).toBe(FOOD_ID);
+    expect(result[0].food).toEqual({ id: FOOD_ID, name: 'flank steak' });
+    expect(result[0].note).toBe('thinly sliced');
   });
 
-  it('infers section header from originalText alone (e.g. "For the sauce")', async () => {
+  it('keeps a multi-word structured note out of the food name', async () => {
     const parseSpy = vi.spyOn(api, 'parseIngredient');
+    vi.spyOn(api, 'resolveOrCreateUnit').mockResolvedValue({
+      id: UNIT_ID,
+      name: 'cup',
+    });
+    const foodSpy = vi
+      .spyOn(api, 'resolveOrCreateFood')
+      .mockResolvedValue({ id: FOOD_ID, name: 'enchilada sauce' } as never);
 
     const result = (await api.parseIngredients([
+      {
+        quantity: 2,
+        unit: { name: 'cup' },
+        food: { name: 'enchilada sauce' },
+        note: 'rest of 2 (10 oz) cans, or homemade',
+      },
+    ])) as Array<{ food: { name: string } | null; note: string }>;
+
+    expect(parseSpy).not.toHaveBeenCalled();
+    expect(foodSpy).toHaveBeenCalledWith('enchilada sauce');
+    expect(result[0].food?.name).toBe('enchilada sauce');
+    expect(result[0].note).toBe('rest of 2 (10 oz) cans, or homemade');
+  });
+
+  it('drops header-only originalText that never reaches an ingredient', async () => {
+    const parseSpy = vi.spyOn(api, 'parseIngredient');
+
+    const result = await api.parseIngredients([
       { originalText: 'For the roast pork' },
       { originalText: 'For the garlic mayonnaise' },
       { originalText: 'For the sandwiches' },
-    ])) as Array<{ title: string }>;
+    ]);
 
     expect(parseSpy).not.toHaveBeenCalled();
-    expect(result).toHaveLength(3);
-    expect(result[0]).toEqual({ title: 'For the roast pork' });
-    expect(result[1]).toEqual({ title: 'For the garlic mayonnaise' });
-    expect(result[2]).toEqual({ title: 'For the sandwiches' });
+    expect(result).toEqual([]);
   });
 
-  it('infers section headers mixed with real ingredients', async () => {
+  it('puts an inferred section header on the next real ingredient', async () => {
     vi.spyOn(api, 'parseIngredient').mockResolvedValue({
       quantity: 1,
       unit: { id: UNIT_ID, name: 'cup' },
@@ -197,11 +215,11 @@ describe('parseIngredients', () => {
     const result = (await api.parseIngredients([
       { originalText: 'For the dough:' },
       { originalText: '1 cup flour' },
-    ])) as Array<{ title: string }>;
+    ])) as Array<{ title: string; food: { name: string } | null }>;
 
-    expect(result).toHaveLength(2);
-    expect(result[0]).toEqual({ title: 'For the dough' });
-    expect(result[1].title).toBe('');
+    expect(result).toHaveLength(1);
+    expect(result[0].title).toBe('For the dough');
+    expect(result[0].food?.name).toBe('flour');
   });
 
   it('does not treat quantity-bearing originalText as a section header', async () => {
@@ -223,7 +241,7 @@ describe('parseIngredients', () => {
     expect(result[0].title).toBe('');
   });
 
-  it('preserves standalone section headers as separate ingredient rows', async () => {
+  it('never emits a title-only row (it renders as a blank checkbox)', async () => {
     vi.spyOn(api, 'parseIngredient').mockResolvedValue({
       quantity: 1,
       unit: { id: UNIT_ID, name: 'cup' },
@@ -233,15 +251,34 @@ describe('parseIngredients', () => {
       originalText: '1 cup flour',
       referenceId: 'r1',
     } as never);
+    vi.spyOn(api, 'resolveOrCreateUnit').mockResolvedValue({
+      id: UNIT_ID,
+      name: 'cup',
+    });
+    vi.spyOn(api, 'resolveOrCreateFood').mockResolvedValue({
+      id: FOOD_ID,
+      name: 'sugar',
+    } as never);
 
     const result = (await api.parseIngredients([
       { title: 'Dry Ingredients' },
       { originalText: '1 cup flour' },
-    ])) as Array<{ title: string }>;
+      { originalText: '1 cup flour' },
+      {
+        title: 'Sweet',
+        quantity: 1,
+        unit: { name: 'cup' },
+        food: { name: 'sugar' },
+      },
+    ])) as Array<{ title: string; food: unknown }>;
 
-    expect(result).toHaveLength(2);
-    expect(result[0].title).toBe('Dry Ingredients');
-    expect(result[1].title).toBe('');
+    expect(result).toHaveLength(3);
+    expect(result.every((r) => r.food)).toBe(true);
+    expect(result.map((r) => r.title)).toEqual([
+      'Dry Ingredients',
+      '',
+      'Sweet',
+    ]);
   });
 
   it('passes note-only ingredients through without calling the parser', async () => {
